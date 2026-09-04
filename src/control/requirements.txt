@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic[email]
+pydantic-settings
+psycopg[binary,pool]
+python-jose[cryptography]
+bcrypt
+python-multipart

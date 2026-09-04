@@ -1,0 +1,31 @@
+# SignalDeck monorepo root
+
+# Agent mandates (local/Cursor team briefs — not product source)
+src/agents/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets & env
+.env
+.env.local
+*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node / web build
+node_modules/
+dist/
+src/web/dist/
+src/web/node_modules/
+
+# Go / binaries
+*.exe
+src/ingest/ingest
+*.test

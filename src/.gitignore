@@ -1,0 +1,20 @@
+# SignalDeck (package-local)
+.DS_Store
+.env
+.env.local
+*.exe
+*.log
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+node_modules/
+dist/
+web/dist/
+ingest/ingest
+*.test
+.idea/
+.vscode/
+
+# Agent mandates (also ignored from repo root)
+agents/
