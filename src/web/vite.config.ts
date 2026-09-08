@@ -11,6 +11,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api/v1/auth': { target: controlTarget, changeOrigin: true },
+      '/api/v1/users': { target: controlTarget, changeOrigin: true },
       '/api/v1/devices': { target: controlTarget, changeOrigin: true },
       '/api/v1/dashboards': { target: controlTarget, changeOrigin: true },
       '/api/v1/ingest': { target: ingestTarget, changeOrigin: true },

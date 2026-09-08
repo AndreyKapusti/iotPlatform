@@ -8,8 +8,11 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { getTelemetryHistory, getWebSocketUrl } from '../api/client';
-import type { HistoryPoint, ReadingEvent } from '../types';
+import { store } from '../../../app/store';
+import { telemetryApi } from '../api/telemetryApi';
+import { getWebSocketUrl } from '../../../shared/lib/format';
+import i18n from '../../i18n/config';
+import type { HistoryPoint, ReadingEvent } from '../../../types';
 
 interface MetricState {
   points: HistoryPoint[];
@@ -23,7 +26,6 @@ interface TelemetryContextValue {
   live: boolean;
   setLive: (live: boolean) => void;
   getMetric: (metric: string) => MetricState;
-  refreshMetric: (metric: string) => Promise<void>;
 }
 
 const TelemetryContext = createContext<TelemetryContextValue | null>(null);
@@ -40,11 +42,13 @@ function normalizePoint(event: ReadingEvent): HistoryPoint {
 export function TelemetryProvider({
   deviceId,
   metrics,
+  historyLimit = 50,
   onReading,
   children,
 }: {
   deviceId: number;
   metrics: string[];
+  historyLimit?: number;
   onReading?: (event: ReadingEvent) => void;
   children: ReactNode;
 }) {
@@ -73,7 +77,16 @@ export function TelemetryProvider({
     async (metric: string) => {
       updateMetric(metric, (prev) => ({ ...prev, loading: true, error: null }));
       try {
-        const data = await getTelemetryHistory(deviceId, metric, 50);
+        const result = await store.dispatch(
+          telemetryApi.endpoints.getTelemetryHistory.initiate(
+            { deviceId, metric, limit: historyLimit },
+            { forceRefetch: true },
+          ),
+        );
+        if ('error' in result && result.error) {
+          throw new Error('Failed to load history');
+        }
+        const data = result.data!;
         const points = [...data.points].reverse();
         updateMetric(metric, () => ({
           points,
@@ -81,12 +94,15 @@ export function TelemetryProvider({
           loading: false,
           error: null,
         }));
-      } catch (err) {
-        const message = err instanceof Error ? err.message : 'Failed to load history';
-        updateMetric(metric, (prev) => ({ ...prev, loading: false, error: message }));
+      } catch {
+        updateMetric(metric, (prev) => ({
+          ...prev,
+          loading: false,
+          error: i18n.t('widgets.historyError'),
+        }));
       }
     },
-    [deviceId, updateMetric],
+    [deviceId, updateMetric, historyLimit],
   );
 
   useEffect(() => {
@@ -94,15 +110,13 @@ export function TelemetryProvider({
     uniqueMetrics.forEach((metric) => {
       void refreshMetric(metric);
     });
-  }, [deviceId, metricsKey, refreshMetric]);
+  }, [deviceId, metricsKey, refreshMetric, historyLimit]);
 
   useEffect(() => {
     if (!live) {
       setConnected(false);
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      wsRef.current?.close();
+      wsRef.current = null;
       if (reconnectTimer.current) {
         window.clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
@@ -126,18 +140,14 @@ export function TelemetryProvider({
           const data = JSON.parse(event.data as string) as ReadingEvent;
           const point = normalizePoint(data);
           onReadingRef.current?.(data);
-          updateMetric(data.metric, (prev) => {
-            const nextPoints = [...prev.points, point].slice(-50);
-            return {
-              ...prev,
-              points: nextPoints,
-              latest: point,
-              loading: false,
-              error: null,
-            };
-          });
+          updateMetric(data.metric, (prev) => ({
+            points: [...prev.points, point].slice(-historyLimit),
+            latest: point,
+            loading: false,
+            error: null,
+          }));
         } catch {
-          // ignore malformed messages
+          /* ignore malformed */
         }
       };
 
@@ -149,9 +159,7 @@ export function TelemetryProvider({
         }
       };
 
-      ws.onerror = () => {
-        ws.close();
-      };
+      ws.onerror = () => ws.close();
     };
 
     connect();
@@ -162,50 +170,34 @@ export function TelemetryProvider({
         window.clearTimeout(reconnectTimer.current);
         reconnectTimer.current = null;
       }
-      if (wsRef.current) {
-        wsRef.current.close();
-        wsRef.current = null;
-      }
+      wsRef.current?.close();
+      wsRef.current = null;
       setConnected(false);
     };
-  }, [deviceId, live, updateMetric]);
+  }, [deviceId, live, updateMetric, historyLimit]);
 
   const getMetric = useCallback(
     (metric: string): MetricState =>
-      metricMap[metric] ?? {
-        points: [],
-        latest: null,
-        loading: true,
-        error: null,
-      },
+      metricMap[metric] ?? { points: [], latest: null, loading: true, error: null },
     [metricMap],
   );
 
   const value = useMemo(
-    () => ({ connected, live, setLive, getMetric, refreshMetric }),
-    [connected, live, getMetric, refreshMetric],
+    () => ({ connected, live, setLive, getMetric }),
+    [connected, live, getMetric],
   );
 
   return <TelemetryContext.Provider value={value}>{children}</TelemetryContext.Provider>;
 }
 
-export function useTelemetry(metric: string): MetricState & { connected: boolean; live: boolean } {
+export function useTelemetry(metric: string): MetricState {
   const ctx = useContext(TelemetryContext);
-  if (!ctx) {
-    throw new Error('useTelemetry must be used within TelemetryProvider');
-  }
-  const metricState = ctx.getMetric(metric);
-  return {
-    ...metricState,
-    connected: ctx.connected,
-    live: ctx.live,
-  };
+  if (!ctx) throw new Error('useTelemetry must be used within TelemetryProvider');
+  return ctx.getMetric(metric);
 }
 
 export function useTelemetryControls() {
   const ctx = useContext(TelemetryContext);
-  if (!ctx) {
-    throw new Error('useTelemetryControls must be used within TelemetryProvider');
-  }
+  if (!ctx) throw new Error('useTelemetryControls must be used within TelemetryProvider');
   return { connected: ctx.connected, live: ctx.live, setLive: ctx.setLive };
 }

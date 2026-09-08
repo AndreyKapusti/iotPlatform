@@ -7,143 +7,82 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
+import { Box, Skeleton, Switch, Typography } from '@mui/material';
+import { useTranslation } from 'react-i18next';
 import type { Capability } from '../../types';
-import { useTelemetry } from '../../hooks/useTelemetry';
-import type { HTMLAttributes, ReactNode } from 'react';
+import { useTelemetry } from '../../features/telemetry/hooks/useTelemetry';
+import i18n from '../../features/i18n/config';
 import { useEffect, useRef, useState } from 'react';
-import { useToast } from '../../hooks/useToast';
 
-interface WidgetShellProps {
-  title: string;
-  selected?: boolean;
-  dragging?: boolean;
-  dragHandleProps?: HTMLAttributes<HTMLSpanElement>;
-  onRemove?: () => void;
-  children: ReactNode;
+interface WidgetCommonProps {
+  metric: string;
+  capability?: Capability;
+  accent?: string;
 }
 
-export function WidgetShell({
-  title,
-  selected,
-  dragging,
-  dragHandleProps,
-  onRemove,
-  children,
-}: WidgetShellProps) {
+function WidgetLoading() {
+  return <Skeleton variant="rounded" width="100%" height="100%" animation="wave" />;
+}
+
+function WidgetError({ message }: { message: string }) {
   return (
-    <div
-      className={[
-        'widget-shell',
-        selected ? 'widget-shell--selected' : '',
-        dragging ? 'widget-shell--dragging' : '',
-      ]
-        .filter(Boolean)
-        .join(' ')}
-    >
-      <div className="widget-header">
-        <span className="widget-drag-handle" {...dragHandleProps} title="Перетащить">
-          ⠿
-        </span>
-        <span className="widget-title">{title}</span>
-        {onRemove && (
-          <button type="button" className="btn btn-ghost" onClick={onRemove} title="Удалить">
-            ×
-          </button>
-        )}
-      </div>
-      <div className="widget-body">{children}</div>
-    </div>
+    <Typography variant="caption" color="error">
+      {message}
+    </Typography>
   );
 }
 
-export function WidgetLoading() {
-  return <div className="widget-skeleton" />;
-}
-
-export function WidgetError({ message }: { message: string }) {
-  return <span style={{ color: 'var(--error)', fontSize: 12 }}>{message}</span>;
-}
-
-interface LineChartWidgetProps {
-  metric: string;
-  capability?: Capability;
-}
-
-export function LineChartWidget({ metric, capability }: LineChartWidgetProps) {
+export function LineChartWidget({ metric, capability, accent }: WidgetCommonProps) {
+  const { t } = useTranslation();
   const { points, loading, error } = useTelemetry(metric);
 
+  const timeLocale = i18n.language === 'en' ? 'en-US' : 'ru-RU';
   const chartData = points.map((p) => ({
-    time: new Date(p.received_at).toLocaleTimeString('ru-RU', {
+    time: new Date(p.received_at).toLocaleTimeString(timeLocale, {
       hour: '2-digit',
       minute: '2-digit',
       second: '2-digit',
     }),
     value: typeof p.value === 'number' ? p.value : Number(p.value),
-    ts: p.received_at,
   }));
 
   if (loading && chartData.length === 0) return <WidgetLoading />;
   if (error) return <WidgetError message={error} />;
   if (chartData.length === 0) {
-    return <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>Нет данных</span>;
+    return (
+      <Typography variant="caption" color="text.secondary">
+        {t('common.noData')}
+      </Typography>
+    );
   }
 
-  return (
-    <LineChartInner
-      data={chartData}
-      unit={capability?.unit ?? undefined}
-      min={capability?.min ?? undefined}
-      max={capability?.max ?? undefined}
-    />
-  );
-}
+  const stroke = accent ?? 'currentColor';
+  const min = capability?.min ?? undefined;
+  const max = capability?.max ?? undefined;
+  const unit = capability?.unit ?? '';
 
-function LineChartInner({
-  data,
-  unit,
-  min,
-  max,
-}: {
-  data: Array<{ time: string; value: number; ts: string }>;
-  unit?: string;
-  min?: number;
-  max?: number;
-}) {
   return (
-    <div className="widget-chart">
+    <Box className="widget-chart">
       <ResponsiveContainer width="100%" height="100%">
-        <LineChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-          <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-          <XAxis dataKey="time" tick={{ fontSize: 10, fill: 'var(--text-muted)' }} interval="preserveStartEnd" />
+        <LineChart data={chartData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <CartesianGrid strokeDasharray="3 3" stroke="rgba(128,128,128,0.2)" />
+          <XAxis dataKey="time" tick={{ fontSize: 10 }} interval="preserveStartEnd" />
           <YAxis
-            tick={{ fontSize: 10, fill: 'var(--text-muted)' }}
+            tick={{ fontSize: 10 }}
             domain={min != null && max != null ? [min, max] : ['auto', 'auto']}
             width={40}
           />
           <Tooltip
-            formatter={(value: number) => [`${value}${unit ? ` ${unit}` : ''}`, 'Значение']}
-            labelFormatter={(label) => String(label)}
+            formatter={(value: number) => [`${value}${unit ? ` ${unit}` : ''}`, t('widgets.value')]}
           />
-          <Line
-            type="monotone"
-            dataKey="value"
-            stroke="var(--widget-accent, var(--accent))"
-            strokeWidth={2}
-            dot={false}
-            isAnimationActive={false}
-          />
+          <Line type="monotone" dataKey="value" stroke={stroke} strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
-    </div>
+    </Box>
   );
 }
 
-interface KpiGaugeWidgetProps {
-  metric: string;
-  capability?: Capability;
-}
-
-export function KpiGaugeWidget({ metric, capability }: KpiGaugeWidgetProps) {
+export function KpiGaugeWidget({ metric, capability, accent }: WidgetCommonProps) {
   const { latest, loading, error } = useTelemetry(metric);
 
   const value =
@@ -160,36 +99,38 @@ export function KpiGaugeWidget({ metric, capability }: KpiGaugeWidgetProps) {
       ? Math.min(100, Math.max(0, ((value - min) / (max - min || 1)) * 100))
       : 0;
 
+  const color =
+    accent ??
+    (pct >= 85 ? '#dc2626' : pct >= 60 ? '#d97706' : '#0f766e');
+
   if (loading && value == null) return <WidgetLoading />;
   if (error) return <WidgetError message={error} />;
 
   return (
-    <div className="widget-gauge">
-      <div
+    <Box className="widget-gauge">
+      <Box
         className="widget-gauge-ring"
-        style={{
-          background: `conic-gradient(var(--widget-accent, var(--accent)) ${pct}%, var(--border) ${pct}%)`,
+        sx={{
+          background: `conic-gradient(${color} ${pct}%, rgba(128,128,128,0.25) ${pct}%)`,
         }}
       >
-        <div className="widget-gauge-inner">
-          <span
-            className="gauge-value"
-            style={{ fontSize: 22, color: 'var(--widget-accent, var(--accent))' }}
-          >
+        <Box className="widget-gauge-inner" sx={{ bgcolor: 'background.paper' }}>
+          <Typography className="gauge-value" sx={{ color }}>
             {value != null && !Number.isNaN(value) ? value.toFixed(1) : '—'}
-          </span>
-        </div>
-      </div>
-      {capability?.unit && <div className="gauge-unit">{capability.unit}</div>}
-    </div>
+          </Typography>
+        </Box>
+      </Box>
+      {capability?.unit && (
+        <Typography variant="body2" color="text.secondary">
+          {capability.unit}
+        </Typography>
+      )}
+    </Box>
   );
 }
 
-interface BooleanIndicatorWidgetProps {
-  metric: string;
-}
-
-export function BooleanIndicatorWidget({ metric }: BooleanIndicatorWidgetProps) {
+export function BooleanIndicatorWidget({ metric }: Pick<WidgetCommonProps, 'metric'>) {
+  const { t } = useTranslation();
   const { latest, loading, error } = useTelemetry(metric);
   const isOn = Boolean(latest?.value);
 
@@ -197,21 +138,32 @@ export function BooleanIndicatorWidget({ metric }: BooleanIndicatorWidgetProps) 
   if (error) return <WidgetError message={error} />;
 
   return (
-    <span className={`indicator-pill ${isOn ? 'indicator-pill--on' : 'indicator-pill--off'}`}>
-      <span className="badge-dot" />
-      {isOn ? 'ON' : 'OFF'}
-    </span>
+    <Box
+      className="indicator-pill"
+      sx={{
+        bgcolor: isOn ? 'success.main' : 'action.hover',
+        color: isOn ? 'success.contrastText' : 'text.secondary',
+        opacity: isOn ? 1 : 0.9,
+        '& .MuiTypography-root': { color: 'inherit' },
+      }}
+    >
+      <Box
+        sx={{
+          width: 8,
+          height: 8,
+          borderRadius: '50%',
+          bgcolor: isOn ? 'currentColor' : 'text.disabled',
+        }}
+      />
+      <Typography variant="body2" fontWeight={600}>
+        {isOn ? t('widgets.on') : t('widgets.off')}
+      </Typography>
+    </Box>
   );
 }
 
-interface ToggleWidgetProps {
-  metric: string;
-  capability?: Capability;
-}
-
-export function ToggleWidget({ metric, capability }: ToggleWidgetProps) {
+export function ToggleWidget({ metric, accent }: WidgetCommonProps) {
   const { latest, loading, error } = useTelemetry(metric);
-  const toast = useToast();
   const telemetryOn = latest != null ? Boolean(latest.value) : null;
   const [localOn, setLocalOn] = useState<boolean | null>(null);
   const lastSyncedRef = useRef<string | null>(null);
@@ -226,23 +178,19 @@ export function ToggleWidget({ metric, capability }: ToggleWidgetProps) {
 
   const isOn = localOn ?? telemetryOn ?? false;
 
-  const handleToggle = () => {
-    const next = !isOn;
-    setLocalOn(next);
-    toast.demo('Команда отправлена (демо)');
-    console.info(`Toggle command for ${metric}: ${next}`, capability?.name);
-  };
-
   if (loading && !latest) return <WidgetLoading />;
   if (error) return <WidgetError message={error} />;
 
   return (
-    <div className="toggle-widget">
-      <label className="toggle-switch" title="Команда актуатора (демо)">
-        <input type="checkbox" checked={isOn} onChange={handleToggle} />
-        <span className="toggle-slider" />
-      </label>
-      <span className="toggle-demo-caption">демо</span>
-    </div>
+    <Switch
+      checked={isOn}
+      onChange={() => setLocalOn(!isOn)}
+      sx={{
+        '& .MuiSwitch-switchBase.Mui-checked': { color: accent ?? 'primary.main' },
+        '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
+          bgcolor: accent ?? 'primary.main',
+        },
+      }}
+    />
   );
 }

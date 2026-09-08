@@ -249,15 +249,20 @@ class DeviceSimulator:
         self.relay_state = False
         self.mqtt: IngestMqttClient | None = None
         self._running = True
+        self._control: ControlClient | None = None
+        self._http: IngestHttpClient | None = None
+        self._device_id: int | None = None
 
     def setup(self) -> tuple[int, str]:
         control = ControlClient(self.cfg.control_url)
+        self._control = control
         control.register(self.cfg.email, self.cfg.username, self.cfg.password)
         control.login(self.cfg.username, self.cfg.password)
         device = control.ensure_device(self.cfg.device_name)
 
         device_id = int(device["id"])
         api_key = str(device["api_key"])
+        self._device_id = device_id
         print(f"[simulator] device_id={device_id}")
         print(f"[simulator] api_key={api_key}")
 
@@ -277,6 +282,24 @@ class DeviceSimulator:
         http.announce(announce_payload)
         self._http = http
         return device_id, api_key
+
+    def refresh_api_key(self) -> bool:
+        """Re-fetch API key from control after regenerate in UI."""
+        if not self._control or self._device_id is None:
+            return False
+        for device in self._control.list_devices():
+            if int(device.get("id", -1)) == self._device_id:
+                api_key = str(device["api_key"])
+                print("[simulator] Refreshed API key from control")
+                if self._http:
+                    self._http.api_key = api_key
+                if self.mqtt:
+                    self.mqtt.client.username_pw_set(
+                        username=str(self._device_id),
+                        password=api_key,
+                    )
+                return True
+        return False
 
     def generate_readings(self) -> dict[str, Any]:
         relay = self.mqtt.relay_state if self.mqtt else self.relay_state
@@ -321,6 +344,25 @@ class DeviceSimulator:
                     f"motion={readings['motion']} "
                     f"relay_1={readings['relay_1']}"
                 )
+            except requests.HTTPError as exc:
+                if exc.response is not None and exc.response.status_code == 401:
+                    if self.refresh_api_key():
+                        try:
+                            if self.mqtt:
+                                self.mqtt.telemetry(payload)
+                            else:
+                                self._http.telemetry(payload)
+                            print("[simulator] Telemetry recovered after API key refresh")
+                            continue
+                        except requests.RequestException as retry_exc:
+                            print(f"[simulator] Send failed after key refresh: {retry_exc}", file=sys.stderr)
+                    else:
+                        print(
+                            "[simulator] 401 Unauthorized — API key invalid. "
+                            "Restart simulator or update device key in UI.",
+                            file=sys.stderr,
+                        )
+                print(f"[simulator] Send failed: {exc}", file=sys.stderr)
             except requests.RequestException as exc:
                 print(f"[simulator] Send failed: {exc}", file=sys.stderr)
             time.sleep(self.cfg.interval_sec)

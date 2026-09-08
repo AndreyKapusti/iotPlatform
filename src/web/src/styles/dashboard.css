@@ -1,0 +1,225 @@
+.dashboard-layout {
+  display: grid;
+  grid-template-columns: 260px 1fr 260px;
+  gap: 16px;
+  align-items: start;
+}
+
+.dashboard-layout--view {
+  grid-template-columns: 1fr;
+}
+
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-auto-rows: 40px;
+  gap: 8px;
+  min-height: 480px;
+  padding: 16px;
+  border-radius: 8px;
+  background-color: var(--dashboard-grid-bg, rgba(0, 0, 0, 0.02));
+  background-image:
+    linear-gradient(to right, var(--dashboard-grid-line, rgba(0, 0, 0, 0.06)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--dashboard-grid-line, rgba(0, 0, 0, 0.06)) 1px, transparent 1px);
+  background-size: calc(100% / 12) 40px;
+}
+
+.dashboard-grid--view {
+  min-height: calc(100vh - 220px);
+}
+
+.dashboard-canvas-wrap--scaled {
+  overflow: hidden;
+}
+
+.dashboard-grid-scale {
+  transform-origin: top left;
+}
+
+.widget-shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  border-radius: 8px;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.widget-shell--selected {
+  outline: 2px solid var(--widget-accent, #0f766e);
+  outline-offset: 0;
+}
+
+.widget-shell--dragging {
+  opacity: 0.85;
+  z-index: 10;
+}
+
+.widget-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  min-height: 36px;
+}
+
+.widget-drag-handle {
+  cursor: grab;
+  user-select: none;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.55;
+}
+
+.widget-drag-handle:active {
+  cursor: grabbing;
+}
+
+.widget-title {
+  flex: 1;
+  font-weight: 500;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.widget-body {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.widget-body--chart {
+  align-items: stretch;
+  justify-content: stretch;
+  padding: 4px 8px 8px;
+}
+
+.widget-chart {
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 120px;
+}
+
+.widget-gauge {
+  text-align: center;
+  width: 100%;
+}
+
+.widget-gauge-ring {
+  width: 96px;
+  height: 96px;
+  margin: 0 auto 8px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.widget-gauge-inner {
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+}
+
+.widget-skeleton {
+  width: 100%;
+  height: 100%;
+  border-radius: 4px;
+  animation: dashboard-shimmer 1.2s infinite;
+  background: linear-gradient(90deg, rgba(0, 0, 0, 0.06) 25%, rgba(0, 0, 0, 0.03) 50%, rgba(0, 0, 0, 0.06) 75%);
+  background-size: 200% 100%;
+}
+
+@keyframes dashboard-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+.widget-resize-handle {
+  position: absolute;
+  z-index: 6;
+  touch-action: none;
+}
+
+.widget-resize-handle--e {
+  top: 50%;
+  right: 0;
+  width: 8px;
+  height: 32px;
+  transform: translateY(-50%);
+  cursor: ew-resize;
+}
+
+.widget-resize-handle--s {
+  bottom: 0;
+  left: 50%;
+  width: 32px;
+  height: 8px;
+  transform: translateX(-50%);
+  cursor: ns-resize;
+}
+
+.widget-resize-handle--se {
+  right: 0;
+  bottom: 0;
+  width: 16px;
+  height: 16px;
+  cursor: nwse-resize;
+}
+
+.widget-resize-handle--se::before {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.gauge-value {
+  font-size: 22px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.indicator-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+@media (max-width: 1200px) {
+  .dashboard-layout:not(.dashboard-layout--view) {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-palette-scroll {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 8px;
+    padding-bottom: 4px;
+  }
+
+  .dashboard-palette-scroll .MuiButton-root {
+    flex: 0 0 auto;
+    white-space: nowrap;
+  }
+}

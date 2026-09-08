@@ -1,28 +1,59 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { ApiError, getProfile, updateProfile } from '../api/client';
-import { useToast } from '../hooks/useToast';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  CardContent,
+  Grid,
+  MenuItem,
+  Stack,
+  TextField,
+  Typography,
+} from '@mui/material';
+import { useSnackbar } from 'notistack';
+import { useTranslation } from 'react-i18next';
+import { useGetProfileQuery, useUpdateProfileMutation } from '../features/profile/api/profileApi';
+import { extractErrorMessage } from '../shared/api/baseApi';
+import { LoadingState } from '../shared/ui/LoadingState';
+import { PageHeader } from '../shared/ui/PageHeader';
 import type { UserProfile, UserProfileUpdate } from '../types';
 
-const TIMEZONE_OPTIONS = [
-  { value: '', label: '— не выбран —' },
-  { value: 'UTC', label: 'UTC' },
-  { value: 'Europe/Moscow', label: 'Europe/Moscow (МСК)' },
-  { value: 'Europe/Kaliningrad', label: 'Europe/Kaliningrad' },
-  { value: 'Europe/Samara', label: 'Europe/Samara' },
-  { value: 'Asia/Yekaterinburg', label: 'Asia/Yekaterinburg' },
-  { value: 'Asia/Omsk', label: 'Asia/Omsk' },
-  { value: 'Asia/Krasnoyarsk', label: 'Asia/Krasnoyarsk' },
-  { value: 'Asia/Irkutsk', label: 'Asia/Irkutsk' },
-  { value: 'Asia/Yakutsk', label: 'Asia/Yakutsk' },
-  { value: 'Asia/Vladivostok', label: 'Asia/Vladivostok' },
-  { value: 'Europe/London', label: 'Europe/London' },
-  { value: 'Europe/Berlin', label: 'Europe/Berlin' },
-  { value: 'Europe/Paris', label: 'Europe/Paris' },
-  { value: 'America/New_York', label: 'America/New_York' },
-  { value: 'America/Los_Angeles', label: 'America/Los_Angeles' },
-  { value: 'Asia/Tokyo', label: 'Asia/Tokyo' },
-  { value: 'Asia/Shanghai', label: 'Asia/Shanghai' },
-];
+const TIMEZONE_VALUES = [
+  '',
+  'UTC',
+  'Europe/Moscow',
+  'Europe/Kaliningrad',
+  'Europe/Samara',
+  'Asia/Yekaterinburg',
+  'Asia/Omsk',
+  'Asia/Krasnoyarsk',
+  'Asia/Irkutsk',
+  'Asia/Yakutsk',
+  'Asia/Vladivostok',
+  'Europe/London',
+  'Europe/Berlin',
+  'America/New_York',
+  'Asia/Tokyo',
+] as const;
+
+const TIMEZONE_LABELS: Record<(typeof TIMEZONE_VALUES)[number], string> = {
+  '': '',
+  UTC: 'UTC',
+  'Europe/Moscow': 'Europe/Moscow (МСК)',
+  'Europe/Kaliningrad': 'Europe/Kaliningrad',
+  'Europe/Samara': 'Europe/Samara',
+  'Asia/Yekaterinburg': 'Asia/Yekaterinburg',
+  'Asia/Omsk': 'Asia/Omsk',
+  'Asia/Krasnoyarsk': 'Asia/Krasnoyarsk',
+  'Asia/Irkutsk': 'Asia/Irkutsk',
+  'Asia/Yakutsk': 'Asia/Yakutsk',
+  'Asia/Vladivostok': 'Asia/Vladivostok',
+  'Europe/London': 'Europe/London',
+  'Europe/Berlin': 'Europe/Berlin',
+  'America/New_York': 'America/New_York',
+  'Asia/Tokyo': 'Asia/Tokyo',
+};
 
 interface ProfileForm {
   email: string;
@@ -71,60 +102,26 @@ function buildPatch(form: ProfileForm): UserProfileUpdate {
   };
 }
 
-function profileInitials(form: Pick<ProfileForm, 'first_name' | 'last_name' | 'username'>): string {
-  const first = form.first_name.trim();
-  const last = form.last_name.trim();
-  if (first && last) {
-    return `${first[0]}${last[0]}`.toUpperCase();
-  }
-  if (first) return first.slice(0, 2).toUpperCase();
-  if (last) return last.slice(0, 2).toUpperCase();
-  return form.username.slice(0, 2).toUpperCase();
-}
-
-function isBirthDateInFuture(value: string): boolean {
-  if (!value) return false;
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const birth = new Date(`${value}T00:00:00`);
-  return birth > today;
-}
-
 export function ProfilePage() {
-  const toast = useToast();
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [fieldError, setFieldError] = useState<string | null>(null);
+  const { t } = useTranslation();
+  const { enqueueSnackbar } = useSnackbar();
+  const { data: profile, isLoading, isError, error, refetch } = useGetProfileQuery();
+  const [updateProfile, { isLoading: saving }] = useUpdateProfileMutation();
   const [form, setForm] = useState<ProfileForm | null>(null);
+  const [fieldError, setFieldError] = useState<string | null>(null);
+
+  const timezoneOptions = useMemo(
+    () =>
+      TIMEZONE_VALUES.map((value) => ({
+        value,
+        label: value === '' ? t('profile.timezoneEmpty') : TIMEZONE_LABELS[value],
+      })),
+    [t],
+  );
 
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      setLoading(true);
-      setLoadError(null);
-      try {
-        const profile = await getProfile();
-        if (!cancelled) {
-          setForm(profileToForm(profile));
-        }
-      } catch (err) {
-        if (!cancelled) {
-          setLoadError(err instanceof ApiError ? err.message : 'Не удалось загрузить профиль');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const initials = useMemo(
-    () => (form ? profileInitials(form) : ''),
-    [form?.first_name, form?.last_name, form?.username],
-  );
+    if (profile) setForm(profileToForm(profile));
+  }, [profile]);
 
   const updateField = <K extends keyof ProfileForm>(key: K, value: ProfileForm[K]) => {
     setFieldError(null);
@@ -134,211 +131,109 @@ export function ProfilePage() {
   const submit = async (e: FormEvent) => {
     e.preventDefault();
     if (!form) return;
-
-    const email = form.email.trim();
-    if (!email) {
-      setFieldError('Email обязателен');
+    if (!form.email.trim()) {
+      setFieldError(t('profile.emailRequired'));
       return;
     }
-    if (isBirthDateInFuture(form.birth_date)) {
-      setFieldError('Дата рождения не может быть в будущем');
+    if (form.birth_date && new Date(`${form.birth_date}T00:00:00`) > new Date()) {
+      setFieldError(t('profile.birthFuture'));
       return;
     }
-
-    setFieldError(null);
-    setSaving(true);
     try {
-      const updated = await updateProfile(buildPatch(form));
-      setForm(profileToForm(updated));
-      toast.success('Профиль сохранён');
+      await updateProfile(buildPatch(form)).unwrap();
+      enqueueSnackbar(t('profile.savedSuccess'), { variant: 'success' });
     } catch (err) {
-      const message =
-        err instanceof ApiError ? err.message : 'Не удалось сохранить профиль';
-      toast.error(message);
-    } finally {
-      setSaving(false);
+      enqueueSnackbar(extractErrorMessage(err as Parameters<typeof extractErrorMessage>[0]), {
+        variant: 'error',
+      });
     }
   };
 
-  if (loading) {
-    return (
-      <div className="page">
-        <div className="page-header">
-          <h1>Профиль</h1>
-        </div>
-        <p className="muted">Загрузка…</p>
-      </div>
-    );
+  if (isLoading || !form) {
+    return <LoadingState label={t('profile.loading')} />;
   }
 
-  if (loadError || !form) {
+  if (isError) {
     return (
-      <div className="page">
-        <div className="page-header">
-          <h1>Профиль</h1>
-        </div>
-        <div className="alert alert-error">{loadError ?? 'Профиль недоступен'}</div>
-      </div>
+      <Alert severity="error" action={<Button onClick={() => void refetch()}>{t('common.retry')}</Button>}>
+        {extractErrorMessage(error as Parameters<typeof extractErrorMessage>[0])}
+      </Alert>
     );
   }
 
   return (
-    <div className="page">
-      <div className="page-header">
-        <div>
-          <h1>Профиль</h1>
-          <p className="muted" style={{ marginTop: 8 }}>
-            Личные данные и контактная информация
-          </p>
-        </div>
-      </div>
+    <>
+      <PageHeader title={t('profile.title')} subtitle={t('profile.subtitle')} />
 
-      <section className="card settings-section profile-section">
-        <div className="profile-header">
-          <div className="profile-avatar" aria-hidden>
-            {initials}
-          </div>
-          <div>
-            <h2 className="settings-section-title">Личные данные</h2>
-            <p className="muted settings-section-desc profile-section-desc">
-              ФИО, дата рождения и контакты сохраняются в вашем аккаунте.
-            </p>
-          </div>
-        </div>
+      <Card>
+        <CardContent sx={{ p: { xs: 2, sm: 3 } }}>
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 3 }}>
+            <Box
+              component="img"
+              src="/favicon.svg"
+              alt="sg"
+              sx={{ width: 56, height: 56, flexShrink: 0, display: 'block' }}
+            />
+            <Box>
+              <Typography variant="h3">{t('profile.personal')}</Typography>
+              <Typography variant="body2" color="text.secondary">
+                {t('profile.personalHint')}
+              </Typography>
+            </Box>
+          </Stack>
 
-        <form className="profile-form" onSubmit={submit}>
-          <div className="profile-form-grid">
-            <label className="field">
-              <span className="field-label">Фамилия</span>
-              <input
-                className="input"
-                type="text"
-                value={form.last_name}
-                onChange={(e) => updateField('last_name', e.target.value)}
-                maxLength={100}
-                autoComplete="family-name"
-              />
-            </label>
+          <Box component="form" onSubmit={(e) => void submit(e)}>
+            <Grid container spacing={2}>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.lastName')} value={form.last_name} onChange={(e) => updateField('last_name', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.firstName')} value={form.first_name} onChange={(e) => updateField('first_name', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.middleName')} value={form.middle_name} onChange={(e) => updateField('middle_name', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.birthDate')} type="date" value={form.birth_date} onChange={(e) => updateField('birth_date', e.target.value)} InputLabelProps={{ shrink: true }} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('auth.email')} type="email" required value={form.email} onChange={(e) => updateField('email', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.login')} value={form.username} disabled />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.phone')} value={form.phone} onChange={(e) => updateField('phone', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.organization')} value={form.organization} onChange={(e) => updateField('organization', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField label={t('profile.jobTitle')} value={form.job_title} onChange={(e) => updateField('job_title', e.target.value)} />
+              </Grid>
+              <Grid item xs={12} sm={6}>
+                <TextField select label={t('profile.timezone')} value={form.timezone} onChange={(e) => updateField('timezone', e.target.value)}>
+                  {timezoneOptions.map((option) => (
+                    <MenuItem key={option.value || 'empty'} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Grid>
+            </Grid>
 
-            <label className="field">
-              <span className="field-label">Имя</span>
-              <input
-                className="input"
-                type="text"
-                value={form.first_name}
-                onChange={(e) => updateField('first_name', e.target.value)}
-                maxLength={100}
-                autoComplete="given-name"
-              />
-            </label>
+            {fieldError && (
+              <Typography color="error" variant="body2" sx={{ mt: 2 }}>
+                {fieldError}
+              </Typography>
+            )}
 
-            <label className="field">
-              <span className="field-label">Отчество</span>
-              <input
-                className="input"
-                type="text"
-                value={form.middle_name}
-                onChange={(e) => updateField('middle_name', e.target.value)}
-                maxLength={100}
-                autoComplete="additional-name"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Дата рождения</span>
-              <input
-                className="input"
-                type="date"
-                value={form.birth_date}
-                onChange={(e) => updateField('birth_date', e.target.value)}
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Email</span>
-              <input
-                className="input"
-                type="email"
-                value={form.email}
-                onChange={(e) => updateField('email', e.target.value)}
-                required
-                autoComplete="email"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Логин</span>
-              <input
-                className="input"
-                type="text"
-                value={form.username}
-                disabled
-                readOnly
-                aria-readonly="true"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Телефон</span>
-              <input
-                className="input"
-                type="tel"
-                value={form.phone}
-                onChange={(e) => updateField('phone', e.target.value)}
-                maxLength={32}
-                autoComplete="tel"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Организация</span>
-              <input
-                className="input"
-                type="text"
-                value={form.organization}
-                onChange={(e) => updateField('organization', e.target.value)}
-                maxLength={200}
-                autoComplete="organization"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Должность</span>
-              <input
-                className="input"
-                type="text"
-                value={form.job_title}
-                onChange={(e) => updateField('job_title', e.target.value)}
-                maxLength={120}
-                autoComplete="organization-title"
-              />
-            </label>
-
-            <label className="field">
-              <span className="field-label">Часовой пояс</span>
-              <select
-                className="select"
-                value={form.timezone}
-                onChange={(e) => updateField('timezone', e.target.value)}
-              >
-                {TIMEZONE_OPTIONS.map((option) => (
-                  <option key={option.value || 'empty'} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          {fieldError && <p className="field-error">{fieldError}</p>}
-
-          <div className="profile-form-actions">
-            <button type="submit" className="btn btn-primary" disabled={saving}>
-              {saving ? 'Сохранение…' : 'Сохранить'}
-            </button>
-          </div>
-        </form>
-      </section>
-    </div>
+            <Button type="submit" variant="contained" sx={{ mt: 3 }} disabled={saving}>
+              {saving ? t('common.saving') : t('common.save')}
+            </Button>
+          </Box>
+        </CardContent>
+      </Card>
+    </>
   );
 }

@@ -3,14 +3,26 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#f4f7f5" />
+    <meta name="description" content="SignalDeck — IoT monitoring and live dashboards" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/favicon.svg" />
     <title>SignalDeck</title>
     <script>
       (function () {
         try {
-          var t = localStorage.getItem('signaldeck_theme');
-          if (t !== 'dark' && t !== 'light') t = 'light';
-          document.documentElement.setAttribute('data-theme', t);
-          document.documentElement.style.colorScheme = t;
+          var pref = localStorage.getItem('signaldeck_theme');
+          if (pref !== 'dark' && pref !== 'light' && pref !== 'system') pref = 'system';
+          var resolved = pref;
+          if (pref === 'system') {
+            resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+          document.documentElement.style.colorScheme = resolved;
+          document.documentElement.dataset.theme = resolved;
+          var locale = localStorage.getItem('signaldeck_locale');
+          if (locale === 'ru' || locale === 'en') {
+            document.documentElement.lang = locale;
+          }
         } catch (e) {}
       })();
     </script>

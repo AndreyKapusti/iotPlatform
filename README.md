@@ -6,15 +6,24 @@ IoT-платформа: телеметрия → capabilities → real-time DnD-
 
 ## Быстрый старт
 
+Одна команда (backend + симулятор + Vite с hot-reload):
+
 ```bash
-cd src/deploy
-docker compose up --build -d
-docker compose --profile demo up -d   # симулятор demo-sensor
+make dev
 ```
+
+Только Docker (UI на :3000, без hot-reload):
+
+```bash
+make start
+```
+
+Остановка: `make stop`
 
 | URL | Что |
 |-----|-----|
-| http://localhost:3000 | UI |
+| http://localhost:5173 | UI (dev, `make dev`) |
+| http://localhost:3000 | UI (Docker, `make start`) |
 | http://localhost:8000/docs | Control API |
 | http://localhost:8001/health | Ingest |
 

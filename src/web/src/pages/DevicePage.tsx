@@ -1,142 +1,201 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
-import { ApiError, formatDate, getCapabilities, getDevice, isDeviceOnline } from '../api/client';
-import type { Capability, Device } from '../types';
+import { useState } from 'react';
+import {
+  Alert,
+  Box,
+  Button,
+  Card,
+  Chip,
+  Grid,
+  Stack,
+  Tab,
+  Tabs,
+  Table,
+  TableBody,
+  TableCell,
+  TableContainer,
+  TableHead,
+  TableRow,
+  Typography,
+} from '@mui/material';
+import { Dashboard as DashboardIcon, Refresh as RefreshIcon } from '@mui/icons-material';
+import { Link as RouterLink, useParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
+import { ConnectionPanel } from '../features/devices/components/ConnectionPanel';
+import { DeviceLiveMetrics } from '../features/devices/components/DeviceLiveMetrics';
+import { useDeviceEvents } from '../shared/hooks/useFleetEvents';
+import {
+  useGetCapabilitiesQuery,
+  useGetDeviceQuery,
+} from '../features/devices/api/devicesApi';
+import { extractErrorMessage } from '../shared/api/baseApi';
+import { formatDate, formatRelativeTime } from '../shared/lib/format';
+import { DeviceStatusChip } from '../shared/ui/DeviceStatusChip';
+import { EmptyState } from '../shared/ui/EmptyState';
+import { LoadingState } from '../shared/ui/LoadingState';
+import { PageHeader } from '../shared/ui/PageHeader';
+import { EventFeed } from '../shared/ui/EventFeed';
+import { StatCard } from '../shared/ui/StatCard';
 
 export function DevicePage() {
+  const { t } = useTranslation();
   const { id } = useParams<{ id: string }>();
   const deviceId = Number(id);
-  const [device, setDevice] = useState<Device | null>(null);
-  const [capabilities, setCapabilities] = useState<Capability[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
+  const [tab, setTab] = useState(0);
 
-  const load = useCallback(async () => {
-    if (!deviceId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const [dev, caps] = await Promise.all([
-        getDevice(deviceId),
-        getCapabilities(deviceId),
-      ]);
-      setDevice(dev);
-      setCapabilities(caps);
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Не удалось загрузить устройство');
-    } finally {
-      setLoading(false);
-    }
-  }, [deviceId]);
+  const {
+    data: device,
+    isLoading: deviceLoading,
+    isError: deviceError,
+    error: deviceErr,
+    refetch: refetchDevice,
+  } = useGetDeviceQuery(deviceId, { skip: !deviceId, pollingInterval: 8000 });
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  const {
+    data: capabilities = [],
+    isLoading: capsLoading,
+    refetch: refetchCaps,
+  } = useGetCapabilitiesQuery(deviceId, { skip: !deviceId });
 
-  const copyKey = async () => {
-    if (!device) return;
-    await navigator.clipboard.writeText(device.api_key);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
-  };
-
-  if (loading) {
-    return <p style={{ color: 'var(--text-muted)' }}>Загрузка…</p>;
+  if (!deviceId) {
+    return <Alert severity="error">{t('device.invalidId')}</Alert>;
   }
 
-  if (error || !device) {
-    return <div className="alert alert-error">{error ?? 'Устройство не найдено'}</div>;
+  if (deviceLoading) {
+    return <LoadingState label={t('device.loading')} />;
   }
 
-  const online = isDeviceOnline(device.last_seen_at);
+  if (deviceError || !device) {
+    return (
+      <Alert
+        severity="error"
+        action={<Button onClick={() => void refetchDevice()}>{t('common.retry')}</Button>}
+      >
+        {extractErrorMessage(deviceErr as Parameters<typeof extractErrorMessage>[0])}
+      </Alert>
+    );
+  }
 
   return (
     <>
-      <div className="page-header">
-        <div>
-          <p style={{ marginBottom: 'var(--space-1)' }}>
-            <Link to="/devices">← Устройства</Link>
-          </p>
-          <h1>{device.name}</h1>
-          <p style={{ color: 'var(--text-muted)', marginTop: 'var(--space-1)' }}>
-            ID: <span className="mono">{device.id}</span>
-          </p>
-        </div>
-        <div className="page-header-actions">
-          <Link className="btn btn-primary" to={`/devices/${device.id}/dashboards`}>
-            Дашборды
-          </Link>
-        </div>
-      </div>
+      <PageHeader
+        title={device.name}
+        subtitle={`ID ${device.id}`}
+        breadcrumbs={[
+          { label: t('devices.title'), to: '/devices' },
+          { label: device.name },
+        ]}
+        actions={
+          <Button
+            variant="contained"
+            component={RouterLink}
+            to={`/devices/${device.id}/dashboards`}
+            startIcon={<DashboardIcon />}
+          >
+            {t('devices.dashboards')}
+          </Button>
+        }
+      />
 
-      <div className="device-meta">
-        <div className="meta-item">
-          <div className="meta-label">Статус</div>
-          <span className={`badge ${online ? 'badge--online' : 'badge--offline'}`}>
-            <span className="badge-dot" />
-            {online ? 'Online' : 'Offline'}
-          </span>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">Последняя активность</div>
-          <div>{formatDate(device.last_seen_at)}</div>
-        </div>
-        <div className="meta-item">
-          <div className="meta-label">Создано</div>
-          <div>{formatDate(device.created_at)}</div>
-        </div>
-      </div>
+      <Grid container spacing={3}>
+        <Grid item xs={12} lg={8}>
+          <Grid container spacing={2} sx={{ mb: 3 }}>
+            <Grid item xs={12} sm={4} sx={{ display: 'flex' }}>
+              <StatCard label={t('common.status')}>
+                <DeviceStatusChip lastSeenAt={device.last_seen_at} size="medium" />
+              </StatCard>
+            </Grid>
+            <Grid item xs={12} sm={4} sx={{ display: 'flex' }}>
+              <StatCard label={t('device.lastSeen')}>
+                <Typography fontWeight={600}>{formatRelativeTime(device.last_seen_at)}</Typography>
+                <Typography variant="caption" color="text.secondary" sx={{ mt: 0.5 }}>
+                  {formatDate(device.last_seen_at)}
+                </Typography>
+              </StatCard>
+            </Grid>
+            <Grid item xs={12} sm={4} sx={{ display: 'flex' }}>
+              <StatCard label={t('common.created')}>
+                <Typography fontWeight={500}>{formatDate(device.created_at)}</Typography>
+              </StatCard>
+            </Grid>
+          </Grid>
 
-      <div className="card" style={{ marginBottom: 'var(--space-4)' }}>
-        <h3 style={{ marginBottom: 'var(--space-3)' }}>Credentials</h3>
-        <div className="meta-label">API Key</div>
-        <div className="api-key-row">
-          <code className="mono">{device.api_key}</code>
-          <button type="button" className="btn btn-secondary" onClick={() => void copyKey()}>
-            {copied ? 'Скопировано' : 'Копировать'}
-          </button>
-        </div>
-        <p style={{ marginTop: 'var(--space-3)', color: 'var(--text-muted)', fontSize: 12 }}>
-          Используйте ключ в заголовке <code className="mono">X-API-Key</code> для MQTT/HTTP ingest.
-        </p>
-      </div>
+          <DeviceLiveMetrics deviceId={deviceId} capabilities={capabilities} />
 
-      <div className="card">
-        <h3 style={{ marginBottom: 'var(--space-3)' }}>Capabilities (schema)</h3>
-        {capabilities.length === 0 ? (
-          <p style={{ color: 'var(--text-muted)' }}>
-            Схема ещё не получена. Запустите симулятор или отправьте announce.
-          </p>
-        ) : (
-          <div className="table-wrap" style={{ border: 'none', boxShadow: 'none' }}>
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>name</th>
-                  <th>type</th>
-                  <th>role</th>
-                  <th>unit</th>
-                  <th>min</th>
-                  <th>max</th>
-                </tr>
-              </thead>
-              <tbody>
-                {capabilities.map((cap) => (
-                  <tr key={cap.name} style={{ cursor: 'default' }}>
-                    <td className="mono">{cap.name}</td>
-                    <td>{cap.type}</td>
-                    <td>{cap.role}</td>
-                    <td>{cap.unit ?? '—'}</td>
-                    <td>{cap.min ?? '—'}</td>
-                    <td>{cap.max ?? '—'}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+          <Card>
+            <Tabs value={tab} onChange={(_, v) => setTab(v)} sx={{ px: 2, borderBottom: 1, borderColor: 'divider' }}>
+              <Tab label={t('device.connection')} />
+              <Tab label={t('device.schema', { count: capabilities.length })} />
+            </Tabs>
+
+            <Box sx={{ p: 3 }}>
+              {tab === 0 && <ConnectionPanel device={device} />}
+
+              {tab === 1 && (
+                <>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+                    <Typography variant="body2" color="text.secondary">
+                      {t('device.schemaHint')}
+                    </Typography>
+                    <Button size="small" startIcon={<RefreshIcon />} onClick={() => void refetchCaps()}>
+                      {t('common.refresh')}
+                    </Button>
+                  </Stack>
+
+                  {capsLoading ? (
+                    <LoadingState minHeight={160} label={t('device.loadingSchema')} />
+                  ) : capabilities.length === 0 ? (
+                    <EmptyState
+                      title={t('device.schemaEmptyTitle')}
+                      description={t('device.schemaEmptyDesc')}
+                    />
+                  ) : (
+                    <TableContainer>
+                      <Table size="small">
+                        <TableHead>
+                          <TableRow>
+                            <TableCell>{t('device.metric')}</TableCell>
+                            <TableCell>{t('device.type')}</TableCell>
+                            <TableCell>{t('device.role')}</TableCell>
+                            <TableCell>{t('device.unit')}</TableCell>
+                            <TableCell>{t('device.min')}</TableCell>
+                            <TableCell>{t('device.max')}</TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {capabilities.map((cap) => (
+                            <TableRow key={cap.name}>
+                              <TableCell>
+                                <Chip label={cap.name} size="small" variant="outlined" />
+                              </TableCell>
+                              <TableCell>{cap.type}</TableCell>
+                              <TableCell>{cap.role}</TableCell>
+                              <TableCell>{cap.unit ?? '—'}</TableCell>
+                              <TableCell>{cap.min ?? '—'}</TableCell>
+                              <TableCell>{cap.max ?? '—'}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  )}
+                </>
+              )}
+            </Box>
+          </Card>
+        </Grid>
+
+        <Grid item xs={12} lg={4}>
+          <Box sx={{ position: { lg: 'sticky' }, top: { lg: 16 } }}>
+            <DeviceEventFeed deviceId={deviceId} />
+          </Box>
+        </Grid>
+      </Grid>
     </>
   );
+}
+
+function DeviceEventFeed({ deviceId }: { deviceId: number }) {
+  const { t } = useTranslation();
+  const events = useDeviceEvents(deviceId, 20);
+  return <EventFeed events={events} title={t('events.deviceTitle')} limit={20} compact />;
 }

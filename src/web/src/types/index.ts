@@ -105,6 +105,11 @@ export interface HistoryResponse {
   points: HistoryPoint[];
 }
 
+export interface LatestTelemetryResponse {
+  device_id: number;
+  readings: HistoryPoint[];
+}
+
 export interface ReadingEvent {
   device_id: number;
   metric: string;
