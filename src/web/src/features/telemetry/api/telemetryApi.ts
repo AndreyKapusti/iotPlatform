@@ -7,7 +7,7 @@ export const telemetryApi = baseApi.injectEndpoints({
       HistoryResponse,
       { deviceId: number; metric: string; limit?: number }
     >({
-      query: ({ deviceId, metric, limit = 50 }) =>
+      query: ({ deviceId, metric, limit = 200 }) =>
         `/api/v1/telemetry/${deviceId}/history?${new URLSearchParams({
           metric,
           limit: String(limit),

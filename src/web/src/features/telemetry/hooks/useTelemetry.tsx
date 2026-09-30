@@ -39,16 +39,23 @@ function normalizePoint(event: ReadingEvent): HistoryPoint {
   };
 }
 
+function filterPointsByRange(points: HistoryPoint[], rangeMs: number): HistoryPoint[] {
+  const cutoff = Date.now() - rangeMs;
+  return points.filter((p) => new Date(p.received_at).getTime() >= cutoff);
+}
+
 export function TelemetryProvider({
   deviceId,
   metrics,
-  historyLimit = 50,
+  historyRangeMs = 5 * 60 * 1000,
+  historyFetchLimit = 200,
   onReading,
   children,
 }: {
   deviceId: number;
   metrics: string[];
-  historyLimit?: number;
+  historyRangeMs?: number;
+  historyFetchLimit?: number;
   onReading?: (event: ReadingEvent) => void;
   children: ReactNode;
 }) {
@@ -79,7 +86,7 @@ export function TelemetryProvider({
       try {
         const result = await store.dispatch(
           telemetryApi.endpoints.getTelemetryHistory.initiate(
-            { deviceId, metric, limit: historyLimit },
+            { deviceId, metric, limit: historyFetchLimit },
             { forceRefetch: true },
           ),
         );
@@ -87,7 +94,7 @@ export function TelemetryProvider({
           throw new Error('Failed to load history');
         }
         const data = result.data!;
-        const points = [...data.points].reverse();
+        const points = filterPointsByRange([...data.points].reverse(), historyRangeMs);
         updateMetric(metric, () => ({
           points,
           latest: points.length > 0 ? points[points.length - 1] : null,
@@ -102,7 +109,7 @@ export function TelemetryProvider({
         }));
       }
     },
-    [deviceId, updateMetric, historyLimit],
+    [deviceId, updateMetric, historyRangeMs, historyFetchLimit],
   );
 
   useEffect(() => {
@@ -110,7 +117,7 @@ export function TelemetryProvider({
     uniqueMetrics.forEach((metric) => {
       void refreshMetric(metric);
     });
-  }, [deviceId, metricsKey, refreshMetric, historyLimit]);
+  }, [deviceId, metricsKey, refreshMetric, historyRangeMs, historyFetchLimit]);
 
   useEffect(() => {
     if (!live) {
@@ -140,12 +147,15 @@ export function TelemetryProvider({
           const data = JSON.parse(event.data as string) as ReadingEvent;
           const point = normalizePoint(data);
           onReadingRef.current?.(data);
-          updateMetric(data.metric, (prev) => ({
-            points: [...prev.points, point].slice(-historyLimit),
-            latest: point,
-            loading: false,
-            error: null,
-          }));
+          updateMetric(data.metric, (prev) => {
+            const nextPoints = filterPointsByRange([...prev.points, point], historyRangeMs);
+            return {
+              points: nextPoints,
+              latest: point,
+              loading: false,
+              error: null,
+            };
+          });
         } catch {
           /* ignore malformed */
         }
@@ -174,7 +184,7 @@ export function TelemetryProvider({
       wsRef.current = null;
       setConnected(false);
     };
-  }, [deviceId, live, updateMetric, historyLimit]);
+  }, [deviceId, live, updateMetric, historyRangeMs]);
 
   const getMetric = useCallback(
     (metric: string): MetricState =>

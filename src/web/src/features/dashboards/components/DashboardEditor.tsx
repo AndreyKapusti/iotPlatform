@@ -1,17 +1,37 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import {
+  DndContext,
+  DragOverlay,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type DragMoveEvent,
+  type DragStartEvent,
+} from '@dnd-kit/core';
+import { Paper, Typography } from '@mui/material';
 import { useSnackbar } from 'notistack';
 import { useTranslation } from 'react-i18next';
 import { useGetDeviceQuery } from '../../devices/api/devicesApi';
 import { useSaveDashboardMutation } from '../api/dashboardsApi';
-import { buildPalette, clampGrid, clampWidgetSize, createWidgetFromPalette } from '../../../shared/lib/dashboard';
+import {
+  buildPalette,
+  clampGrid,
+  clampWidgetSize,
+  createWidgetFromPalette,
+  DEFAULT_SIZES,
+  findNextPosition,
+} from '../../../shared/lib/dashboard';
 import { extractErrorMessage } from '../../../shared/api/baseApi';
-import type { ChartHistoryLimit } from '../../../shared/lib/constants';
+import type { ChartHistoryRangeId } from '../../../shared/lib/constants';
+import { GRID_COLS, ROW_HEIGHT, getChartHistoryRange } from '../../../shared/lib/constants';
 import { TelemetryProvider } from '../../telemetry/hooks/useTelemetry';
-import { DashboardCanvas } from './DashboardCanvas';
+import { DashboardCanvas, CANVAS_DROPPABLE_ID, type DashboardCanvasHandle } from './DashboardCanvas';
 import { DashboardToolbar, type DashboardMode } from './DashboardToolbar';
 import { PropertiesPanel } from './PropertiesPanel';
-import { WidgetPalette } from './WidgetPalette';
-import type { Capability, Device, ReadingEvent, WidgetLayout } from '../../../types';
+import { PaletteDragOverlay, WidgetPalette } from './WidgetPalette';
+import { WidgetPreviewDialog } from './WidgetPreviewDialog';
+import type { Capability, Device, PaletteItem, ReadingEvent, WidgetLayout } from '../../../types';
 
 interface DashboardEditorProps {
   device: Device;
@@ -19,6 +39,24 @@ interface DashboardEditorProps {
   dashboardId: number;
   dashboardName: string;
   initialLayout: WidgetLayout[];
+}
+
+type ActiveDrag =
+  | { kind: 'palette'; item: PaletteItem }
+  | { kind: 'widget'; widget: WidgetLayout }
+  | null;
+
+function pointerToGridPos(
+  grid: HTMLDivElement,
+  clientX: number,
+  clientY: number,
+  w: number,
+): { x: number; y: number } {
+  const rect = grid.getBoundingClientRect();
+  const cellW = rect.width / GRID_COLS || 1;
+  const x = clampGrid(Math.floor((clientX - rect.left) / cellW), 0, GRID_COLS - w);
+  const y = Math.max(0, Math.floor((clientY - rect.top) / ROW_HEIGHT));
+  return { x, y };
 }
 
 export function DashboardEditor({
@@ -43,7 +81,16 @@ export function DashboardEditor({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [lastSeen, setLastSeen] = useState(device.last_seen_at);
-  const [historyLimit, setHistoryLimit] = useState<ChartHistoryLimit>(50);
+  const [historyRangeId, setHistoryRangeId] = useState<ChartHistoryRangeId>('5m');
+  const [previewItem, setPreviewItem] = useState<PaletteItem | null>(null);
+  const [activeDrag, setActiveDrag] = useState<ActiveDrag>(null);
+  const [dropPreview, setDropPreview] = useState<{ x: number; y: number; w: number; h: number } | null>(
+    null,
+  );
+
+  const canvasRef = useRef<DashboardCanvasHandle>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }));
+  const historyRange = getChartHistoryRange(historyRangeId);
 
   const deviceWithSeen = useMemo(
     () => ({ ...device, last_seen_at: lastSeen ?? device.last_seen_at }),
@@ -59,8 +106,8 @@ export function DashboardEditor({
     setLastSeen(event.received_at);
   }, []);
 
-  const addWidget = (item: ReturnType<typeof buildPalette>[number]) => {
-    const widget = createWidgetFromPalette(item, layout);
+  const addWidget = (item: PaletteItem, position?: { x: number; y: number }) => {
+    const widget = createWidgetFromPalette(item, layout, position);
     setLayout((prev) => [...prev, widget]);
     setSelectedId(widget.id);
   };
@@ -108,8 +155,92 @@ export function DashboardEditor({
     if (next === 'view') setSelectedId(null);
   };
 
+  const resolvePaletteDropPos = (item: PaletteItem, clientX?: number, clientY?: number) => {
+    const size = DEFAULT_SIZES[item.type];
+    const grid = canvasRef.current?.getGridElement();
+    if (grid && clientX != null && clientY != null) {
+      return { ...pointerToGridPos(grid, clientX, clientY, size.w), ...size };
+    }
+    return { ...findNextPosition(layout), ...size };
+  };
+
+  const onDragStart = (event: DragStartEvent) => {
+    if (!editing) return;
+    const data = event.active.data.current;
+    if (data?.source === 'palette' && data.item) {
+      setActiveDrag({ kind: 'palette', item: data.item as PaletteItem });
+      setPreviewItem(null);
+      return;
+    }
+    if (data?.source === 'widget' && data.widget) {
+      const widget = data.widget as WidgetLayout;
+      setActiveDrag({ kind: 'widget', widget });
+      setSelectedId(widget.id);
+    }
+  };
+
+  const onDragMove = (event: DragMoveEvent) => {
+    if (!editing) return;
+    const data = event.active.data.current;
+    if (data?.source !== 'palette' || !data.item) return;
+    const translated = event.active.rect.current.translated;
+    if (!translated) return;
+    const next = resolvePaletteDropPos(
+      data.item as PaletteItem,
+      translated.left + translated.width / 2,
+      translated.top + translated.height / 2,
+    );
+    setDropPreview(next);
+  };
+
+  const onDragEnd = (event: DragEndEvent) => {
+    const current = activeDrag;
+    const preview = dropPreview;
+    setActiveDrag(null);
+    setDropPreview(null);
+    if (!editing || !current) return;
+
+    if (current.kind === 'palette') {
+      const overCanvas = event.over?.id === CANVAS_DROPPABLE_ID;
+      if (!preview && !overCanvas) return;
+      const translated = event.active.rect.current.translated;
+      const pos =
+        preview ??
+        resolvePaletteDropPos(
+          current.item,
+          translated ? translated.left + translated.width / 2 : undefined,
+          translated ? translated.top + translated.height / 2 : undefined,
+        );
+      addWidget(current.item, { x: pos.x, y: pos.y });
+      return;
+    }
+
+    if (!event.delta) return;
+    const grid = canvasRef.current?.getGridElement();
+    if (!grid) return;
+    const widget = layout.find((w) => w.id === current.widget.id);
+    if (!widget) return;
+    const cellW = grid.clientWidth / GRID_COLS;
+    const dx = Math.round(event.delta.x / cellW);
+    const dy = Math.round(event.delta.y / ROW_HEIGHT);
+    const x = clampGrid(widget.x + dx, 0, GRID_COLS - widget.w);
+    const y = Math.max(0, widget.y + dy);
+    setLayout((prev) => prev.map((w) => (w.id === widget.id ? { ...w, x, y } : w)));
+  };
+
+  const onDragCancel = () => {
+    setActiveDrag(null);
+    setDropPreview(null);
+  };
+
   return (
-    <TelemetryProvider deviceId={device.id} metrics={metrics} historyLimit={historyLimit} onReading={handleReading}>
+    <TelemetryProvider
+      deviceId={device.id}
+      metrics={metrics}
+      historyRangeMs={historyRange.ms}
+      historyFetchLimit={historyRange.fetchLimit}
+      onReading={handleReading}
+    >
       <DashboardToolbar
         device={deviceWithSeen}
         title={name}
@@ -119,45 +250,72 @@ export function DashboardEditor({
         saving={saving}
         error={error}
         metrics={metrics}
-        historyLimit={historyLimit}
-        onHistoryLimitChange={setHistoryLimit}
+        historyRangeId={historyRangeId}
+        onHistoryRangeChange={setHistoryRangeId}
         onSave={() => void handleSave()}
         onReset={handleReset}
         onModeChange={handleModeChange}
       />
 
-      <div className={`dashboard-layout ${editing ? '' : 'dashboard-layout--view'}`}>
-        {editing && <WidgetPalette items={palette} onAdd={addWidget} />}
+      <DndContext
+        sensors={sensors}
+        onDragStart={onDragStart}
+        onDragMove={onDragMove}
+        onDragEnd={onDragEnd}
+        onDragCancel={onDragCancel}
+      >
+        <div className={`dashboard-layout ${editing ? '' : 'dashboard-layout--view'}`}>
+          {editing && <WidgetPalette items={palette} onPreview={setPreviewItem} />}
 
-        <DashboardCanvas
-          layout={layout}
-          capabilities={capabilities}
-          selectedId={selectedId}
-          editable={editing}
-          onSelect={setSelectedId}
-          onRemove={(id) => {
-            setLayout((prev) => prev.filter((w) => w.id !== id));
-            if (selectedId === id) setSelectedId(null);
-          }}
-          onMove={(id, x, y) =>
-            setLayout((prev) => prev.map((w) => (w.id === id ? { ...w, x, y } : w)))
-          }
-          onResize={(id, w, h) => updateWidget(id, { w, h })}
-          onEdit={() => handleModeChange('edit')}
-        />
-
-        {editing && (
-          <PropertiesPanel
-            widget={selected}
-            onChange={(patch) => selected && updateWidget(selected.id, patch)}
-            onDelete={() => {
-              if (!selected) return;
-              setLayout((prev) => prev.filter((w) => w.id !== selected.id));
-              setSelectedId(null);
+          <DashboardCanvas
+            ref={canvasRef}
+            layout={layout}
+            capabilities={capabilities}
+            selectedId={selectedId}
+            editable={editing}
+            dropPreview={dropPreview}
+            paletteDragging={activeDrag?.kind === 'palette'}
+            onSelect={setSelectedId}
+            onRemove={(id) => {
+              setLayout((prev) => prev.filter((w) => w.id !== id));
+              if (selectedId === id) setSelectedId(null);
             }}
+            onResize={(id, w, h) => updateWidget(id, { w, h })}
+            onEdit={() => handleModeChange('edit')}
           />
-        )}
-      </div>
+
+          {editing && (
+            <PropertiesPanel
+              widget={selected}
+              onChange={(patch) => selected && updateWidget(selected.id, patch)}
+              onDelete={() => {
+                if (!selected) return;
+                setLayout((prev) => prev.filter((w) => w.id !== selected.id));
+                setSelectedId(null);
+              }}
+            />
+          )}
+        </div>
+
+        <DragOverlay dropAnimation={null}>
+          {activeDrag?.kind === 'palette' ? (
+            <PaletteDragOverlay item={activeDrag.item} />
+          ) : activeDrag?.kind === 'widget' ? (
+            <Paper variant="outlined" sx={{ width: 220, height: 120, p: 1.5, opacity: 0.92, boxShadow: 6 }}>
+              <Typography variant="body2" fontWeight={500}>
+                {activeDrag.widget.title ?? activeDrag.widget.metric}
+              </Typography>
+            </Paper>
+          ) : null}
+        </DragOverlay>
+      </DndContext>
+
+      <WidgetPreviewDialog
+        item={previewItem}
+        open={Boolean(previewItem)}
+        onClose={() => setPreviewItem(null)}
+        onAdd={(item) => addWidget(item)}
+      />
     </TelemetryProvider>
   );
 }

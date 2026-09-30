@@ -19,8 +19,8 @@ import { telemetryApi } from '../../telemetry/api/telemetryApi';
 import { DeviceStatusChip } from '../../../shared/ui/DeviceStatusChip';
 import { formatRelativeTime } from '../../../shared/lib/format';
 import { downloadCsv, mergeHistoryCsv } from '../../../shared/lib/exportCsv';
-import type { ChartHistoryLimit } from '../../../shared/lib/constants';
-import { CHART_HISTORY_LIMITS } from '../../../shared/lib/constants';
+import type { ChartHistoryRangeId } from '../../../shared/lib/constants';
+import { CHART_HISTORY_RANGES, getChartHistoryRange } from '../../../shared/lib/constants';
 import { useTelemetryControls } from '../../telemetry/hooks/useTelemetry';
 import type { Device } from '../../../types';
 
@@ -34,8 +34,8 @@ interface DashboardToolbarProps {
   saving: boolean;
   error: string | null;
   metrics: string[];
-  historyLimit: ChartHistoryLimit;
-  onHistoryLimitChange: (limit: ChartHistoryLimit) => void;
+  historyRangeId: ChartHistoryRangeId;
+  onHistoryRangeChange: (id: ChartHistoryRangeId) => void;
   onSave: () => void;
   onReset: () => void;
   onModeChange: (mode: DashboardMode) => void;
@@ -50,8 +50,8 @@ export function DashboardToolbar({
   saving,
   error,
   metrics,
-  historyLimit,
-  onHistoryLimitChange,
+  historyRangeId,
+  onHistoryRangeChange,
   onSave,
   onReset,
   onModeChange,
@@ -63,9 +63,10 @@ export function DashboardToolbar({
   const editing = mode === 'edit';
   const [, setTick] = useState(0);
   const [exporting, setExporting] = useState(false);
+  const range = getChartHistoryRange(historyRangeId);
 
   useEffect(() => {
-    const id = window.setInterval(() => setTick((t) => t + 1), 5000);
+    const id = window.setInterval(() => setTick((n) => n + 1), 5000);
     return () => window.clearInterval(id);
   }, []);
 
@@ -73,17 +74,20 @@ export function DashboardToolbar({
     if (metrics.length === 0) return;
     setExporting(true);
     try {
+      const cutoff = Date.now() - range.ms;
       const historyByMetric: Record<string, import('../../../types').HistoryPoint[]> = {};
       for (const metric of metrics) {
         const result = await store.dispatch(
           telemetryApi.endpoints.getTelemetryHistory.initiate({
             deviceId: device.id,
             metric,
-            limit: historyLimit,
+            limit: range.fetchLimit,
           }),
         );
         if ('data' in result && result.data) {
-          historyByMetric[metric] = [...result.data.points].reverse();
+          historyByMetric[metric] = [...result.data.points]
+            .reverse()
+            .filter((p) => new Date(p.received_at).getTime() >= cutoff);
         }
       }
       downloadCsv(
@@ -141,12 +145,12 @@ export function DashboardToolbar({
           <ToggleButtonGroup
             size="small"
             exclusive
-            value={historyLimit}
-            onChange={(_, value: ChartHistoryLimit | null) => value && onHistoryLimitChange(value)}
+            value={historyRangeId}
+            onChange={(_, value: ChartHistoryRangeId | null) => value && onHistoryRangeChange(value)}
           >
-            {CHART_HISTORY_LIMITS.map((limit) => (
-              <ToggleButton key={limit} value={limit}>
-                {t('dashboards.historyPoints', { count: limit })}
+            {CHART_HISTORY_RANGES.map((item) => (
+              <ToggleButton key={item.id} value={item.id}>
+                {t(item.labelKey)}
               </ToggleButton>
             ))}
           </ToggleButtonGroup>

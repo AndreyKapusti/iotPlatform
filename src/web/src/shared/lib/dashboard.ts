@@ -47,19 +47,34 @@ export function findNextPosition(layout: WidgetLayout[]): { x: number; y: number
   return { x: 0, y: maxY };
 }
 
-export function createWidgetFromPalette(item: PaletteItem, layout: WidgetLayout[]): WidgetLayout {
+export function createWidgetFromPalette(
+  item: PaletteItem,
+  layout: WidgetLayout[],
+  position?: { x: number; y: number },
+): WidgetLayout {
   const size = DEFAULT_SIZES[item.type];
-  const pos = findNextPosition(layout);
+  const pos = position ?? findNextPosition(layout);
   return {
     id: createWidgetId(),
     type: item.type,
     metric: item.metric,
     title: item.capability.name,
-    x: pos.x,
-    y: pos.y,
+    x: clampGrid(pos.x, 0, 12 - size.w),
+    y: Math.max(0, pos.y),
     w: size.w,
     h: size.h,
   };
+}
+
+export function paletteDragId(item: PaletteItem): string {
+  return `palette:${item.type}:${item.metric}`;
+}
+
+export function parsePaletteDragId(id: string): { type: WidgetType; metric: string } | null {
+  if (!id.startsWith('palette:')) return null;
+  const [, type, metric] = id.split(':');
+  if (!type || !metric) return null;
+  return { type: type as WidgetType, metric };
 }
 
 export function clampGrid(value: number, min: number, max: number): number {

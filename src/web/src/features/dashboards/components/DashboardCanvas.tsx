@@ -1,19 +1,12 @@
-import {
-  DndContext,
-  DragOverlay,
-  PointerSensor,
-  useDraggable,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-  type DragStartEvent,
-} from '@dnd-kit/core';
+import { useDraggable, useDroppable } from '@dnd-kit/core';
 import { CSS } from '@dnd-kit/utilities';
 import { Box, Button, Card, CardContent, IconButton, Paper, Typography, useTheme } from '@mui/material';
 import { Close as CloseIcon, DragIndicator as DragIcon } from '@mui/icons-material';
 import { useTranslation } from 'react-i18next';
 import {
+  forwardRef,
   useEffect,
+  useImperativeHandle,
   useRef,
   useState,
   type CSSProperties,
@@ -25,7 +18,7 @@ import {
   ROW_HEIGHT,
   VIEW_GRID_MIN_WIDTH,
 } from '../../../shared/lib/constants';
-import { clampGrid, clampWidgetSize } from '../../../shared/lib/dashboard';
+import { clampWidgetSize } from '../../../shared/lib/dashboard';
 import {
   BooleanIndicatorWidget,
   KpiGaugeWidget,
@@ -33,6 +26,12 @@ import {
   ToggleWidget,
 } from '../../../components/widgets';
 import type { Capability, WidgetLayout } from '../../../types';
+
+export const CANVAS_DROPPABLE_ID = 'dashboard-canvas';
+
+export interface DashboardCanvasHandle {
+  getGridElement: () => HTMLDivElement | null;
+}
 
 type ResizeAxis = 'e' | 's' | 'se';
 
@@ -46,8 +45,8 @@ const ACCENT_MAP: Record<string, string> = {
 };
 
 function useViewGridScale(
-  wrapRef: RefObject<HTMLDivElement>,
-  gridRef: RefObject<HTMLDivElement>,
+  wrapRef: RefObject<HTMLDivElement | null>,
+  gridRef: RefObject<HTMLDivElement | null>,
   enabled: boolean,
   layoutLength: number,
 ) {
@@ -101,7 +100,7 @@ function GridWidget({
   const accent = ACCENT_MAP[widget.accent ?? 'default'] ?? theme.palette.primary.main;
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: widget.id,
-    data: { widget },
+    data: { source: 'widget', widget },
     disabled: !editable,
   });
 
@@ -189,17 +188,39 @@ function GridWidget({
   );
 }
 
-function DashboardEmptyState({ editable, onEdit }: { editable: boolean; onEdit?: () => void }) {
+function DashboardEmptyState({
+  editable,
+  dropActive,
+  onEdit,
+}: {
+  editable: boolean;
+  dropActive: boolean;
+  onEdit?: () => void;
+}) {
   const { t } = useTranslation();
 
   return (
-    <Card sx={{ maxWidth: 420, mx: 'auto', my: 4 }}>
+    <Card
+      className={dropActive ? 'dashboard-empty--drop-active' : undefined}
+      sx={{
+        maxWidth: 420,
+        mx: 'auto',
+        my: 4,
+        borderStyle: dropActive ? 'dashed' : undefined,
+        borderColor: dropActive ? 'primary.main' : undefined,
+        bgcolor: dropActive ? 'action.selected' : undefined,
+      }}
+    >
       <CardContent sx={{ textAlign: 'center', py: 5 }}>
         <Typography variant="h3" gutterBottom>
-          {t('dashboards.emptyCanvasTitle')}
+          {dropActive ? t('dashboards.dropHere') : t('dashboards.emptyCanvasTitle')}
         </Typography>
         <Typography variant="body2" color="text.secondary" sx={{ mb: editable ? 0 : 2 }}>
-          {editable ? t('dashboards.emptyCanvasEdit') : t('dashboards.emptyCanvasView')}
+          {editable
+            ? dropActive
+              ? t('dashboards.dropHereHint')
+              : t('dashboards.emptyCanvasEdit')
+            : t('dashboards.emptyCanvasView')}
         </Typography>
         {!editable && onEdit && (
           <Button variant="contained" sx={{ mt: 2 }} onClick={onEdit}>
@@ -211,37 +232,50 @@ function DashboardEmptyState({ editable, onEdit }: { editable: boolean; onEdit?:
   );
 }
 
-export function DashboardCanvas({
-  layout,
-  capabilities,
-  selectedId,
-  editable,
-  onSelect,
-  onRemove,
-  onMove,
-  onResize,
-  onEdit,
-}: {
-  layout: WidgetLayout[];
-  capabilities: Capability[];
-  selectedId: string | null;
-  editable: boolean;
-  onSelect: (id: string | null) => void;
-  onRemove: (id: string) => void;
-  onMove: (id: string, x: number, y: number) => void;
-  onResize: (id: string, w: number, h: number) => void;
-  onEdit?: () => void;
-}) {
+export const DashboardCanvas = forwardRef<
+  DashboardCanvasHandle,
+  {
+    layout: WidgetLayout[];
+    capabilities: Capability[];
+    selectedId: string | null;
+    editable: boolean;
+    dropPreview: { x: number; y: number; w: number; h: number } | null;
+    paletteDragging: boolean;
+    onSelect: (id: string | null) => void;
+    onRemove: (id: string) => void;
+    onResize: (id: string, w: number, h: number) => void;
+    onEdit?: () => void;
+  }
+>(function DashboardCanvas(
+  {
+    layout,
+    capabilities,
+    selectedId,
+    editable,
+    dropPreview,
+    paletteDragging,
+    onSelect,
+    onRemove,
+    onResize,
+    onEdit,
+  },
+  ref,
+) {
   const theme = useTheme();
-  const gridRef = useRef<HTMLDivElement>(null);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
   const [cellWidth, setCellWidth] = useState(0);
   const { scale, scaledHeight } = useViewGridScale(wrapRef, gridRef, !editable, layout.length);
   const isScaled = !editable && scale < 1;
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
   const capMap = Object.fromEntries(capabilities.map((c) => [c.name, c]));
-  const activeWidget = layout.find((w) => w.id === activeId) ?? null;
+  const { setNodeRef: setDroppableRef, isOver } = useDroppable({
+    id: CANVAS_DROPPABLE_ID,
+    disabled: !editable,
+  });
+
+  useImperativeHandle(ref, () => ({
+    getGridElement: () => gridRef.current,
+  }));
 
   useEffect(() => {
     const grid = gridRef.current;
@@ -253,42 +287,38 @@ export function DashboardCanvas({
     return () => observer.disconnect();
   }, [editable, layout.length]);
 
-  if (layout.length === 0) {
-    return <DashboardEmptyState editable={editable} onEdit={onEdit} />;
-  }
-
-  const onDragStart = (event: DragStartEvent) => {
-    if (!editable) return;
-    const id = String(event.active.id);
-    setActiveId(id);
-    onSelect(id);
-  };
-
-  const onDragEnd = (event: DragEndEvent) => {
-    setActiveId(null);
-    if (!editable || !event.delta || !gridRef.current) return;
-    const widget = layout.find((w) => w.id === event.active.id);
-    if (!widget) return;
-    const cellW = gridRef.current.clientWidth / GRID_COLS;
-    const dx = Math.round(event.delta.x / cellW);
-    const dy = Math.round(event.delta.y / ROW_HEIGHT);
-    const x = clampGrid(widget.x + dx, 0, GRID_COLS - widget.w);
-    const y = Math.max(0, widget.y + dy);
-    onMove(widget.id, x, y);
-  };
+  const dropActive = editable && paletteDragging && (isOver || Boolean(dropPreview));
+  const showEmpty = layout.length === 0 && !dropPreview;
 
   return (
     <Box
-      ref={wrapRef}
-      className={isScaled ? 'dashboard-canvas-wrap--scaled' : undefined}
+      ref={(node: HTMLDivElement | null) => {
+        wrapRef.current = node;
+        setDroppableRef(node);
+      }}
+      className={[
+        isScaled ? 'dashboard-canvas-wrap--scaled' : '',
+        dropActive ? 'dashboard-canvas--drop-active' : '',
+      ]
+        .filter(Boolean)
+        .join(' ')}
       sx={{
+        position: 'relative',
         overflow: isScaled ? 'hidden' : undefined,
         height: isScaled && scaledHeight ? scaledHeight : undefined,
+        minHeight: editable ? 480 : undefined,
+        borderRadius: 1,
+        outline: dropActive ? `2px dashed ${theme.palette.primary.main}` : '2px solid transparent',
+        outlineOffset: 2,
+        transition: 'outline-color 0.15s, background-color 0.15s',
+        bgcolor: dropActive ? 'action.hover' : undefined,
         '--dashboard-grid-bg': theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.02)' : 'rgba(0,0,0,0.02)',
         '--dashboard-grid-line': theme.palette.mode === 'dark' ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)',
       }}
     >
-      <DndContext sensors={sensors} onDragStart={onDragStart} onDragEnd={onDragEnd}>
+      {showEmpty ? (
+        <DashboardEmptyState editable={editable} dropActive={dropActive} onEdit={onEdit} />
+      ) : (
         <Box
           className={isScaled ? 'dashboard-grid-scale' : undefined}
           sx={
@@ -299,7 +329,7 @@ export function DashboardCanvas({
         >
           <Box
             ref={gridRef}
-            className={`dashboard-grid${editable ? '' : ' dashboard-grid--view'}`}
+            className={`dashboard-grid${editable ? '' : ' dashboard-grid--view'}${dropActive ? ' dashboard-grid--drop-active' : ''}`}
             onClick={(e) => {
               if (editable && e.target === e.currentTarget) onSelect(null);
             }}
@@ -317,18 +347,27 @@ export function DashboardCanvas({
                 onResize={(w, h) => onResize(widget.id, w, h)}
               />
             ))}
+            {dropPreview && (
+              <Box
+                className="dashboard-drop-preview"
+                sx={{
+                  gridColumn: `${dropPreview.x + 1} / span ${dropPreview.w}`,
+                  gridRow: `${dropPreview.y + 1} / span ${dropPreview.h}`,
+                }}
+              />
+            )}
           </Box>
         </Box>
-        <DragOverlay>
-          {activeWidget ? (
-            <Paper variant="outlined" sx={{ width: 220, height: 120, p: 1.5, opacity: 0.9 }}>
-              <Typography variant="body2" fontWeight={500}>
-                {activeWidget.title ?? activeWidget.metric}
-              </Typography>
-            </Paper>
-          ) : null}
-        </DragOverlay>
-      </DndContext>
+      )}
+      {/* Keep a hidden grid mounted while empty so drop coordinates still resolve */}
+      {showEmpty && (
+        <Box
+          ref={gridRef}
+          className="dashboard-grid"
+          sx={{ position: 'absolute', inset: 0, opacity: 0, pointerEvents: 'none', minHeight: 480 }}
+          aria-hidden
+        />
+      )}
     </Box>
   );
-}
+});

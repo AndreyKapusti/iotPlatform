@@ -53,8 +53,28 @@
 }
 
 .widget-shell--dragging {
-  opacity: 0.85;
+  opacity: 0.4;
   z-index: 10;
+}
+
+.dashboard-canvas--drop-active .dashboard-grid {
+  background-color: transparent;
+}
+
+.dashboard-grid--drop-active {
+  outline: none;
+}
+
+.dashboard-drop-preview {
+  border: 2px dashed var(--widget-accent, #0f766e);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--widget-accent, #0f766e) 12%, transparent);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.palette-drag-handle {
+  touch-action: none;
 }
 
 .widget-header {

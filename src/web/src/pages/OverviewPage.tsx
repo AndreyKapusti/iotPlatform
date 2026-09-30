@@ -24,6 +24,7 @@ import { useFleetMeta } from '../shared/hooks/useFleetMeta';
 import { usePinnedDevices } from '../shared/hooks/usePinnedDevices';
 import { computeFleetHealth, healthScoreColor } from '../shared/lib/fleetHealth';
 import { formatDate, formatDurationMs, formatRelativeTime, isDeviceOnline } from '../shared/lib/format';
+import { DigitalTwinPanel } from '../features/digitalTwin/components/DigitalTwinPanel';
 import { DeviceStatusChip } from '../shared/ui/DeviceStatusChip';
 import { LoadingState } from '../shared/ui/LoadingState';
 import { PageHeader } from '../shared/ui/PageHeader';
@@ -135,6 +136,8 @@ export function OverviewPage() {
   return (
     <>
       <PageHeader title={t('overview.title')} subtitle={t('overview.subtitle')} />
+
+      <DigitalTwinPanel devices={devices} />
 
       <Grid container spacing={2} sx={{ mb: 3 }}>
         <Grid item xs={12} sm={6} lg={3} sx={{ display: 'flex' }}>

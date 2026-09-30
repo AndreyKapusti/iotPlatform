@@ -1,0 +1,103 @@
+/* Digital twin — Homely House + garden canvas on Overview */
+
+.twin-panel {
+  /* Prefer vars set from DigitalTwinPanel (MUI theme); fall back to data-theme. */
+  border: 1px solid var(--twin-border, var(--mui-palette-divider, #d8e0dc));
+  border-radius: 16px;
+  background: var(--twin-bg, var(--mui-palette-background-paper, #ffffff));
+  display: flex;
+  flex-direction: column;
+  transition: border-color 180ms ease, background-color 180ms ease;
+}
+
+[data-theme='light'] .twin-panel {
+  --twin-border: #d8e0dc;
+  --twin-bg: #ffffff;
+}
+
+[data-theme='dark'] .twin-panel {
+  --twin-border: #2c3845;
+  --twin-bg: #1a222c;
+}
+
+.twin-panel--empty {
+  border-style: dashed;
+}
+
+.twin-panel__chrome {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 14px 18px 10px;
+}
+
+.twin-panel__titles {
+  min-width: 0;
+  flex: 1 1 200px;
+}
+
+.twin-panel__title {
+  margin: 0 0 2px !important;
+  line-height: 1.25;
+}
+
+.twin-panel__subtitle {
+  max-width: 100%;
+}
+
+.twin-panel__stage {
+  margin: 0 12px;
+  height: clamp(280px, 38vw, 400px);
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--twin-border, #d8e0dc) 55%, transparent);
+  background: #f7f8fa;
+}
+
+[data-theme='dark'] .twin-panel__stage {
+  background: color-mix(in srgb, var(--twin-border, #2c3845) 18%, #0e1412);
+}
+
+.twin-panel__footer {
+  padding: 10px 18px 14px;
+  min-height: 0;
+}
+
+.twin-scene {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+.twin-scene canvas {
+  outline: none;
+  display: block;
+  width: 100% !important;
+  height: 100% !important;
+}
+
+.twin-legend {
+  min-height: 0;
+}
+
+.twin-legend .MuiChip-root {
+  height: 24px;
+  font-size: 0.72rem;
+}
+
+@media (max-width: 600px) {
+  .twin-panel__chrome {
+    padding: 12px 14px 8px;
+  }
+
+  .twin-panel__stage {
+    margin: 0 8px;
+    height: 280px;
+  }
+
+  .twin-panel__footer {
+    padding: 8px 14px 12px;
+  }
+}

@@ -13,8 +13,17 @@ export const VIEW_GRID_MIN_WIDTH = 720;
 
 export const ONLINE_THRESHOLD_MS = 60_000;
 
-export const CHART_HISTORY_LIMITS = [50, 200, 500] as const;
-export type ChartHistoryLimit = (typeof CHART_HISTORY_LIMITS)[number];
+export const CHART_HISTORY_RANGES = [
+  { id: '5m', ms: 5 * 60 * 1000, fetchLimit: 200, labelKey: 'dashboards.history5m' },
+  { id: '15m', ms: 15 * 60 * 1000, fetchLimit: 500, labelKey: 'dashboards.history15m' },
+  { id: '1h', ms: 60 * 60 * 1000, fetchLimit: 1000, labelKey: 'dashboards.history1h' },
+] as const;
+
+export type ChartHistoryRangeId = (typeof CHART_HISTORY_RANGES)[number]['id'];
+
+export function getChartHistoryRange(id: ChartHistoryRangeId) {
+  return CHART_HISTORY_RANGES.find((range) => range.id === id) ?? CHART_HISTORY_RANGES[0];
+}
 
 export const OFFLINE_THRESHOLD_OPTIONS = [
   { ms: 60_000, labelKey: 'settings.threshold1m' },
