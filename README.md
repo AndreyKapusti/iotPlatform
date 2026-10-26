@@ -29,4 +29,5 @@ make start
 
 Демо-логин: `admin` / `admin123`
 
-Подробности: [`src/README.md`](src/README.md).
+Подробности: [`src/README.md`](src/README.md).  
+Техническое задание: [`src/docs/technical-specification.md`](src/docs/technical-specification.md).

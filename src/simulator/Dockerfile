@@ -10,6 +10,8 @@ COPY main.py .
 ENV CONTROL_URL=http://control:8000 \
     INGEST_HTTP_URL=http://ingest:8001 \
     MQTT_BROKER=mosquitto:1883 \
+    MQTT_USERNAME=devices \
+    MQTT_PASSWORD=signaldeck-devices \
     DEVICE_NAME=demo-sensor \
     SIGNALDECK_EMAIL=admin@example.com \
     SIGNALDECK_USERNAME=admin \

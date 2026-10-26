@@ -16,8 +16,8 @@
 | MQTT `devices/{device_id}/announce` | Публикация / обновление capabilities |
 | MQTT `devices/{device_id}/telemetry` | Периодические readings |
 | MQTT `devices/{device_id}/command` | Команды актуаторам (опционально в MVP) |
-| HTTP `POST /api/v1/receive_data/` | Fallback ingest (отладка) |
-| Auth | `X-API-Key` и/или MQTT username/password, выданные control API |
+| HTTP `POST /api/v1/ingest/announce`, `POST /api/v1/ingest/telemetry` | Fallback ingest |
+| Auth | HTTP: заголовок `X-API-Key`. MQTT: пользователь брокера `devices` и поле `api_key` в JSON. Платформа подписана как `ingest`. Анонимный вход на брокер закрыт |
 
 Точные имена топиков можно уточнить в фазе 2; смысл сохраняем.
 
@@ -89,9 +89,9 @@
 }
 ```
 
-- Ключи в `readings` должны соответствовать `capabilities[].name`.  
-- Неизвестные ключи: логировать / класть в raw (политика фазы 2); UI их не предлагает, пока нет в схеме.  
-- `timestamp` опционален; иначе время сервера.
+- Имя и тип каждого reading должны совпадать с объявленной capability. Чужое имя или чужой тип — пакет не пишется.
+- `timestamp` можно прислать, на запись он не влияет: `received_at` и `last_seen_at` ставит сервер.
+- `metadata` в теле платформа не сохраняет.
 
 ## Маппинг на виджеты (MVP)
 
@@ -105,7 +105,7 @@
 ## Поведение сервера
 
 1. При announce — upsert схемы устройства (`schema_version`, список capabilities).  
-2. При telemetry — запись в time-series; realtime push подписчикам WS.  
+2. При telemetry — запись совпавших readings с серверным `received_at`; realtime push подписчикам WS.  
 3. Control API отдаёт схему фронту для библиотеки виджетов DnD.  
 4. Команды actuator (если включим в MVP) — publish в `command`; симулятор меняет state и отражает в следующем readings.
 
@@ -127,3 +127,4 @@
 | Версия | Дата | Изменение |
 |--------|------|-----------|
 | v0 | 2026-07-20 | Первый черновик для SignalDeck MVP |
+| v0 | 2026-10-26 | MQTT: `api_key` в JSON и брокер без анонимов. Readings сверяются со схемой. Время точки — серверное |

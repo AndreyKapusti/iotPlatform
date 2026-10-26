@@ -1,0 +1,9 @@
+user ingest
+topic read devices/+/announce
+topic read devices/+/telemetry
+topic write devices/+/command
+
+user devices
+topic write devices/+/announce
+topic write devices/+/telemetry
+topic read devices/+/command

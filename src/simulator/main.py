@@ -71,6 +71,8 @@ class Config:
     password: str
     interval_sec: float
     use_mqtt: bool
+    mqtt_username: str
+    mqtt_password: str
 
     def __init__(self) -> None:
         self.control_url = os.getenv("CONTROL_URL", "http://localhost:8000").rstrip("/")
@@ -86,6 +88,8 @@ class Config:
         self.password = os.getenv("SIGNALDECK_PASSWORD", os.getenv("PASSWORD", "admin123"))
         self.interval_sec = env_float("INTERVAL_SEC", 2.0)
         self.use_mqtt = env_bool("USE_MQTT", False)
+        self.mqtt_username = os.getenv("MQTT_USERNAME", "devices")
+        self.mqtt_password = os.getenv("MQTT_PASSWORD", "signaldeck-devices")
 
 
 class ControlClient:
@@ -192,8 +196,27 @@ class IngestHttpClient:
         response.raise_for_status()
 
 
+def attach_api_key(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
+    """MQTT bodies carry the device key. HTTP keeps it in the header only."""
+    body = dict(payload)
+    body["api_key"] = api_key
+    return body
+
+
+def broker_username_after_refresh(broker_username: str, _api_key: str) -> str:
+    """Key rotation updates the JSON key, not the shared broker login."""
+    return broker_username
+
+
 class IngestMqttClient:
-    def __init__(self, broker: str, device_id: int, api_key: str) -> None:
+    def __init__(
+        self,
+        broker: str,
+        device_id: int,
+        api_key: str,
+        broker_username: str,
+        broker_password: str,
+    ) -> None:
         try:
             import paho.mqtt.client as mqtt
         except ImportError as exc:
@@ -205,13 +228,16 @@ class IngestMqttClient:
         host, _, port_str = broker.partition(":")
         port = int(port_str or "1883")
         self.device_id = device_id
+        self.api_key = api_key
+        self.broker_username = broker_username
+        self.broker_password = broker_password
         self.relay_state = False
 
         self.client = mqtt.Client(
             client_id=f"simulator-{device_id}",
             protocol=mqtt.MQTTv311,
         )
-        self.client.username_pw_set(username=str(device_id), password=api_key)
+        self.client.username_pw_set(username=broker_username, password=broker_password)
         self.client.on_message = self._on_message
         self.client.connect(host, port, keepalive=60)
         self.client.subscribe(f"devices/{device_id}/command")
@@ -231,12 +257,14 @@ class IngestMqttClient:
 
     def announce(self, payload: dict[str, Any]) -> None:
         topic = f"devices/{self.device_id}/announce"
-        self.client.publish(topic, json.dumps(payload), qos=1)
+        body = attach_api_key(payload, self.api_key)
+        self.client.publish(topic, json.dumps(body), qos=1)
         print(f"[ingest] Announce OK (MQTT {topic})")
 
     def telemetry(self, payload: dict[str, Any]) -> None:
         topic = f"devices/{self.device_id}/telemetry"
-        self.client.publish(topic, json.dumps(payload), qos=0)
+        body = attach_api_key(payload, self.api_key)
+        self.client.publish(topic, json.dumps(body), qos=0)
 
     def stop(self) -> None:
         self.client.loop_stop()
@@ -274,7 +302,13 @@ class DeviceSimulator:
         }
 
         if self.cfg.use_mqtt:
-            self.mqtt = IngestMqttClient(self.cfg.mqtt_broker, device_id, api_key)
+            self.mqtt = IngestMqttClient(
+                self.cfg.mqtt_broker,
+                device_id,
+                api_key,
+                self.cfg.mqtt_username,
+                self.cfg.mqtt_password,
+            )
             self.mqtt.announce(announce_payload)
             return device_id, api_key
 
@@ -294,10 +328,9 @@ class DeviceSimulator:
                 if self._http:
                     self._http.api_key = api_key
                 if self.mqtt:
-                    self.mqtt.client.username_pw_set(
-                        username=str(self._device_id),
-                        password=api_key,
-                    )
+                    self.mqtt.api_key = api_key
+                    username = broker_username_after_refresh(self.mqtt.broker_username, api_key)
+                    self.mqtt.client.username_pw_set(username, self.mqtt.broker_password)
                 return True
         return False
 

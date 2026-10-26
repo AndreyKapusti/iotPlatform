@@ -44,7 +44,11 @@ func main() {
 	mqtt := mqttclient.NewClient(st, wsHub, logger)
 
 	var mqttClient paho.Client
-	mqttClient, err = mqtt.Connect(ctx, cfg.MQTTBroker)
+	if cfg.JWTSecret == "" {
+		logger.Warn("JWT_SECRET is empty; history and websocket reject every caller")
+	}
+
+	mqttClient, err = mqtt.Connect(ctx, cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
 	if err != nil {
 		logger.Error("mqtt connect failed", "error", err)
 		os.Exit(1)

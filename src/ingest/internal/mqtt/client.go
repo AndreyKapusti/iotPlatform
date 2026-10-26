@@ -3,6 +3,7 @@ package mqtt
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -28,7 +29,7 @@ func NewClient(st *store.Store, h *hub.Hub, logger *slog.Logger) *Client {
 	return &Client{store: st, hub: h, logger: logger}
 }
 
-func (c *Client) Connect(ctx context.Context, brokerURL string) (paho.Client, error) {
+func brokerOptions(brokerURL, username, password string) *paho.ClientOptions {
 	opts := paho.NewClientOptions()
 	opts.AddBroker(brokerURL)
 	opts.SetClientID(fmt.Sprintf("signaldeck-ingest-%d", time.Now().UnixNano()))
@@ -36,7 +37,15 @@ func (c *Client) Connect(ctx context.Context, brokerURL string) (paho.Client, er
 	opts.SetConnectRetry(true)
 	opts.SetConnectRetryInterval(5 * time.Second)
 	opts.SetKeepAlive(30 * time.Second)
+	if username != "" {
+		opts.SetUsername(username)
+		opts.SetPassword(password)
+	}
+	return opts
+}
 
+func (c *Client) Connect(ctx context.Context, brokerURL, username, password string) (paho.Client, error) {
+	opts := brokerOptions(brokerURL, username, password)
 	client := paho.NewClient(opts)
 	token := client.Connect()
 	if !token.WaitTimeout(10 * time.Second) {
@@ -150,6 +159,10 @@ func (c *Client) onTelemetry(_ paho.Client, msg paho.Message) {
 
 	classified, receivedAt, err := c.store.SaveTelemetry(ctx, payload)
 	if err != nil {
+		if errors.Is(err, store.ErrCapabilityMismatch) || errors.Is(err, store.ErrUnsupportedValue) {
+			c.logger.Warn("telemetry rejected", "device_id", payload.DeviceID, "error", err)
+			return
+		}
 		c.logger.Error("telemetry save failed", "device_id", payload.DeviceID, "error", err)
 		return
 	}

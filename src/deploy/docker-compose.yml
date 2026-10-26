@@ -18,12 +18,20 @@ services:
       retries: 10
 
   mosquitto:
-    image: eclipse-mosquitto:2
+    build:
+      context: ./mosquitto
+    image: signaldeck-mosquitto
     container_name: signaldeck_mosquitto
+    environment:
+      MQTT_INGEST_USER: ingest
+      MQTT_INGEST_PASSWORD: signaldeck-ingest
+      MQTT_DEVICE_USER: devices
+      MQTT_DEVICE_PASSWORD: signaldeck-devices
     ports:
       - "1883:1883"
     volumes:
-      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - ./mosquitto/acl:/mosquitto/config/acl:ro
 
   control:
     build:
@@ -46,6 +54,9 @@ services:
     environment:
       DATABASE_URL: postgres://signaldeck:signaldeck@postgres:5432/signaldeck?sslmode=disable
       MQTT_BROKER: tcp://mosquitto:1883
+      MQTT_USERNAME: ingest
+      MQTT_PASSWORD: signaldeck-ingest
+      JWT_SECRET: signaldeck-dev-secret-change-me
       HTTP_ADDR: ":8001"
       CORS_ORIGINS: http://localhost:5173,http://localhost:3000,http://localhost
     ports:
@@ -74,6 +85,8 @@ services:
       CONTROL_URL: http://control:8000
       INGEST_HTTP_URL: http://ingest:8001
       MQTT_BROKER: mosquitto:1883
+      MQTT_USERNAME: devices
+      MQTT_PASSWORD: signaldeck-devices
       INTERVAL_SEC: "2"
       SIGNALDECK_EMAIL: admin@example.com
       SIGNALDECK_USERNAME: admin

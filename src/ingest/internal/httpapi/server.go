@@ -13,20 +13,35 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/rs/cors"
 
+	"signaldeck/ingest/internal/auth"
 	"signaldeck/ingest/internal/config"
 	"signaldeck/ingest/internal/hub"
 	"signaldeck/ingest/internal/store"
 )
 
+// deviceStore is the slice of persistence the HTTP handlers need.
+// *store.Store implements it; tests pass a fake.
+type deviceStore interface {
+	Ping(ctx context.Context) error
+	ValidateDeviceAPIKey(ctx context.Context, deviceID int, apiKey string) error
+	SaveAnnounce(ctx context.Context, payload store.AnnouncePayload) error
+	SaveTelemetry(ctx context.Context, payload store.TelemetryPayload) ([]store.SavedReading, time.Time, error)
+	GetHistory(ctx context.Context, deviceID int, metric string, limit int) ([]store.HistoryPoint, error)
+	GetLatest(ctx context.Context, deviceID int) ([]store.LatestReading, error)
+	AuthorizeDeviceOwner(ctx context.Context, username string, deviceID int) error
+}
+
+var _ deviceStore = (*store.Store)(nil)
+
 type Server struct {
-	store  *store.Store
+	store  deviceStore
 	hub    *hub.Hub
 	cfg    config.Config
 	logger *slog.Logger
 	upgr   websocket.Upgrader
 }
 
-func New(st *store.Store, h *hub.Hub, cfg config.Config, logger *slog.Logger) *Server {
+func New(st deviceStore, h *hub.Hub, cfg config.Config, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -173,7 +188,7 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 
 	readings, receivedAt, err := s.store.SaveTelemetry(ctx, payload)
 	if err != nil {
-		if errors.Is(err, store.ErrUnsupportedValue) {
+		if errors.Is(err, store.ErrUnsupportedValue) || errors.Is(err, store.ErrCapabilityMismatch) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -203,6 +218,9 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	deviceID, err := strconv.Atoi(r.PathValue("deviceId"))
 	if err != nil || deviceID <= 0 {
 		writeError(w, http.StatusBadRequest, "invalid device id")
+		return
+	}
+	if !s.authorizeOwner(w, r, deviceID) {
 		return
 	}
 
@@ -246,6 +264,9 @@ func (s *Server) handleLatest(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid device id")
 		return
 	}
+	if !s.authorizeOwner(w, r, deviceID) {
+		return
+	}
 
 	readings, err := s.store.GetLatest(r.Context(), deviceID)
 	if err != nil {
@@ -264,6 +285,9 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 	deviceID, err := strconv.Atoi(r.URL.Query().Get("device_id"))
 	if err != nil || deviceID <= 0 {
 		writeError(w, http.StatusBadRequest, "device_id query parameter required")
+		return
+	}
+	if !s.authorizeOwner(w, r, deviceID) {
 		return
 	}
 
@@ -315,6 +339,41 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+}
+
+func tokenFromRequest(r *http.Request) string {
+	header := r.Header.Get("Authorization")
+	if len(header) >= 7 && strings.EqualFold(header[:7], "bearer ") {
+		return strings.TrimSpace(header[7:])
+	}
+	return strings.TrimSpace(r.URL.Query().Get("access_token"))
+}
+
+func (s *Server) authorizeOwner(w http.ResponseWriter, r *http.Request, deviceID int) bool {
+	token := tokenFromRequest(r)
+	if token == "" || s.cfg.JWTSecret == "" {
+		writeError(w, http.StatusUnauthorized, "missing token")
+		return false
+	}
+	username, err := auth.UsernameFromToken(s.cfg.JWTSecret, token)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid token")
+		return false
+	}
+	if err := s.store.AuthorizeDeviceOwner(r.Context(), username, deviceID); err != nil {
+		if errors.Is(err, store.ErrDeviceNotFound) {
+			writeError(w, http.StatusNotFound, "device not found")
+			return false
+		}
+		if errors.Is(err, store.ErrUserNotFound) {
+			writeError(w, http.StatusUnauthorized, "invalid token")
+			return false
+		}
+		s.logger.Error("authorize device owner", "device_id", deviceID, "error", err)
+		writeError(w, http.StatusInternalServerError, "auth check failed")
+		return false
+	}
+	return true
 }
 
 func writeJSON(w http.ResponseWriter, status int, payload interface{}) {

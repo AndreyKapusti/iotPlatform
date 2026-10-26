@@ -12,19 +12,21 @@ import (
 )
 
 var (
-	ErrDeviceNotFound   = errors.New("device not found")
-	ErrInvalidAPIKey    = errors.New("invalid api key")
-	ErrUnknownMetric    = errors.New("unknown metric")
-	ErrUnsupportedValue = errors.New("unsupported reading value type")
+	ErrDeviceNotFound     = errors.New("device not found")
+	ErrUserNotFound       = errors.New("user not found")
+	ErrInvalidAPIKey      = errors.New("invalid api key")
+	ErrUnknownMetric      = errors.New("unknown metric")
+	ErrUnsupportedValue   = errors.New("unsupported reading value type")
+	ErrCapabilityMismatch = errors.New("reading does not match capability")
 )
 
 type Capability struct {
-	Name   string   `json:"name"`
-	Type   string   `json:"type"`
-	Role   string   `json:"role"`
-	Unit   *string  `json:"unit,omitempty"`
-	Min    *float64 `json:"min,omitempty"`
-	Max    *float64 `json:"max,omitempty"`
+	Name string   `json:"name"`
+	Type string   `json:"type"`
+	Role string   `json:"role"`
+	Unit *string  `json:"unit,omitempty"`
+	Min  *float64 `json:"min,omitempty"`
+	Max  *float64 `json:"max,omitempty"`
 }
 
 type AnnouncePayload struct {
@@ -179,20 +181,97 @@ func classifyFromInterface(name string, value interface{}) (SavedReading, error)
 	return classifyReading(name, raw)
 }
 
-func (s *Store) SaveTelemetry(ctx context.Context, payload TelemetryPayload) ([]SavedReading, time.Time, error) {
-	receivedAt := time.Now().UTC()
-	if payload.Timestamp != nil {
-		receivedAt = payload.Timestamp.UTC()
+// ReceivedAt is the server clock. A device timestamp must not move last_seen or history order.
+func ReceivedAt(now time.Time, _ *time.Time) time.Time {
+	return now.UTC()
+}
+
+func MatchReadings(caps map[string]string, readings map[string]interface{}) ([]SavedReading, error) {
+	if len(readings) == 0 {
+		return nil, fmt.Errorf("%w: empty readings", ErrCapabilityMismatch)
+	}
+	classified := make([]SavedReading, 0, len(readings))
+	for name, value := range readings {
+		expected, ok := caps[name]
+		if !ok {
+			return nil, fmt.Errorf("%w: unknown metric %q", ErrCapabilityMismatch, name)
+		}
+		reading, err := classifyFromInterface(name, value)
+		if err != nil {
+			return nil, err
+		}
+		if reading.Kind != expected {
+			return nil, fmt.Errorf("%w: metric %q is %s, capability is %s", ErrCapabilityMismatch, name, reading.Kind, expected)
+		}
+		classified = append(classified, reading)
+	}
+	return classified, nil
+}
+
+func (s *Store) capabilityTypes(ctx context.Context, deviceID int) (map[string]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT name, data_type FROM device_capabilities WHERE device_id = $1`,
+		deviceID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("load capabilities: %w", err)
+	}
+	defer rows.Close()
+
+	caps := make(map[string]string)
+	for rows.Next() {
+		var name, dataType string
+		if err := rows.Scan(&name, &dataType); err != nil {
+			return nil, fmt.Errorf("scan capability: %w", err)
+		}
+		caps[name] = dataType
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("capabilities rows: %w", err)
+	}
+	return caps, nil
+}
+
+func (s *Store) AuthorizeDeviceOwner(ctx context.Context, username string, deviceID int) error {
+	var userID int
+	err := s.pool.QueryRow(ctx,
+		`SELECT id FROM users WHERE username = $1 AND is_active = TRUE`,
+		username,
+	).Scan(&userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrUserNotFound
+		}
+		return fmt.Errorf("lookup user: %w", err)
 	}
 
-	classified := make([]SavedReading, 0, len(payload.Readings))
-	for name, value := range payload.Readings {
-		cr, err := classifyFromInterface(name, value)
-		if err != nil {
-			return nil, time.Time{}, err
+	var ownerID int
+	err = s.pool.QueryRow(ctx,
+		`SELECT user_id FROM devices WHERE id = $1 AND is_active = TRUE`,
+		deviceID,
+	).Scan(&ownerID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrDeviceNotFound
 		}
-		classified = append(classified, cr)
+		return fmt.Errorf("lookup device owner: %w", err)
 	}
+	if ownerID != userID {
+		return ErrDeviceNotFound
+	}
+	return nil
+}
+
+func (s *Store) SaveTelemetry(ctx context.Context, payload TelemetryPayload) ([]SavedReading, time.Time, error) {
+	caps, err := s.capabilityTypes(ctx, payload.DeviceID)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	classified, err := MatchReadings(caps, payload.Readings)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	receivedAt := ReceivedAt(time.Now(), payload.Timestamp)
 
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -453,6 +532,11 @@ func (s *Store) GetLatest(ctx context.Context, deviceID int) ([]LatestReading, e
 	}
 
 	return readings, nil
+}
+
+func NumberReading(name string, value float64) SavedReading {
+	v := value
+	return SavedReading{Name: name, Kind: "number", num: &v}
 }
 
 func ReadingValue(cr SavedReading) interface{} {

@@ -6,10 +6,13 @@ import (
 )
 
 type Config struct {
-	DatabaseURL string
-	MQTTBroker  string
-	HTTPAddr    string
-	CORSOrigins []string
+	DatabaseURL  string
+	MQTTBroker   string
+	MQTTUsername string
+	MQTTPassword string
+	JWTSecret    string
+	HTTPAddr     string
+	CORSOrigins  []string
 }
 
 func Load() Config {
@@ -33,9 +36,12 @@ func Load() Config {
 	}
 
 	return Config{
-		DatabaseURL: os.Getenv("DATABASE_URL"),
-		MQTTBroker:  mqttBroker,
-		HTTPAddr:    httpAddr,
-		CORSOrigins: clean,
+		DatabaseURL:  os.Getenv("DATABASE_URL"),
+		MQTTBroker:   mqttBroker,
+		MQTTUsername: os.Getenv("MQTT_USERNAME"),
+		MQTTPassword: os.Getenv("MQTT_PASSWORD"),
+		JWTSecret:    os.Getenv("JWT_SECRET"),
+		HTTPAddr:     httpAddr,
+		CORSOrigins:  clean,
 	}
 }

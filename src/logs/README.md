@@ -29,8 +29,12 @@
 | [2026-07-20-day-wrap.md](2026-07-20-day-wrap.md) | **Итог дня**, стенд остановлен |
 | [2026-07-22-user-profile.md](2026-07-22-user-profile.md) | Профиль v1: BE `/users/me`, UI `/profile`, deploy + backlog |
 | [2026-07-22-fix-profile-load.md](2026-07-22-fix-profile-load.md) | Фикс: профиль не загружался (nginx не проксировал `/api/v1/users`) |
+| [2026-10-06-technical-specification.md](2026-10-06-technical-specification.md) | ТЗ SignalDeck v1.0 |
+| [2026-10-26-code-audit.md](2026-10-26-code-audit.md) | Статический аудит качества: MQTT, схема телеметрии, тесты |
+| [2026-10-26-fix-audit-majors.md](2026-10-26-fix-audit-majors.md) | Фикс AUD-01…03: брокер, схема readings, JWT на чтение |
 | [TEMPLATE.md](TEMPLATE.md) | Шаблон новой записи |
 
 ## Связанные docs
 - Статус приёмки: `../docs/changelog/mvp-status-2026-07-20.md`
 - QA: `../docs/qa/mvp-checklist.md`
+- Аудит качества: `../docs/qa/audit-2026-10-26.md`

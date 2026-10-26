@@ -45,6 +45,7 @@ src/
 | [Product Manager](docs/product-manager.md) | Мандат PM |
 | [Team](docs/team.md) | Sub-agents |
 | [MVP plan](docs/mvp-plan.md) | Фазы |
+| [**Техническое задание**](docs/technical-specification.md) | ТЗ: цель, границы, FR/NFR, приёмка |
 | [Backlog UI-first](docs/backlog.md) | Что накидывать в интерфейс на stub’ах |
 | [Roadmap future](docs/roadmap-future.md) | Планы на будущее (email verify, 2FA, …) |
 | [User profile](docs/features/user-profile.md) | Профиль пользователя v1 |
@@ -52,6 +53,7 @@ src/
 | [Device contract](docs/device-contract-v0.md) | Протокол устройств |
 | [UI guidelines](docs/design/ui-guidelines.md) | Дизайн |
 | [QA checklist](docs/qa/mvp-checklist.md) | Приёмка |
+| [Аудит качества](docs/qa/audit-2026-10-26.md) | Статический разбор кода, 2026-10-26 |
 | [PM status](docs/changelog/mvp-status-2026-07-20.md) | Статус исполнения MVP |
 | [**Logs**](logs/README.md) | Журнал: сделано / план / подводные камни |
 

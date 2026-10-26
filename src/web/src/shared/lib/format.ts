@@ -1,5 +1,5 @@
 import i18n from '../../features/i18n/config';
-import { TIMEZONE_STORAGE_KEY } from './constants';
+import { TIMEZONE_STORAGE_KEY, TOKEN_STORAGE_KEY } from './constants';
 
 function getDateLocale(): string {
   return i18n.language === 'en' ? 'en-US' : 'ru-RU';
@@ -81,12 +81,27 @@ export function formatMetricValue(value: number | boolean | string, unit?: strin
   return String(value);
 }
 
+function readAccessToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_STORAGE_KEY)?.trim() ?? '';
+  } catch {
+    return '';
+  }
+}
+
+function withAccessToken(url: string): string {
+  const token = readAccessToken();
+  if (!token) return url;
+  const join = url.includes('?') ? '&' : '?';
+  return `${url}${join}access_token=${encodeURIComponent(token)}`;
+}
+
 export function getWebSocketUrl(deviceId: number): string {
   const envUrl = import.meta.env.VITE_WS_URL;
   if (envUrl) {
     const base = envUrl.replace(/\/$/, '');
-    return `${base}?device_id=${deviceId}`;
+    return withAccessToken(`${base}?device_id=${deviceId}`);
   }
   const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${proto}//${window.location.host}/api/v1/ws?device_id=${deviceId}`;
+  return withAccessToken(`${proto}//${window.location.host}/api/v1/ws?device_id=${deviceId}`);
 }
