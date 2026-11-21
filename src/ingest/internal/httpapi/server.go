@@ -83,6 +83,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/v1/telemetry/{deviceId}/history", s.handleHistory)
 	mux.HandleFunc("GET /api/v1/telemetry/{deviceId}/latest", s.handleLatest)
 	mux.HandleFunc("GET /api/v1/ws", s.handleWebSocket)
+	mux.HandleFunc("POST /api/v1/commands/{deviceId}", s.createCommand)
+	mux.HandleFunc("GET /api/v1/commands/{deviceId}/{commandId}", s.getCommand)
+	mux.HandleFunc("GET /api/v1/ingest/commands", s.deviceCommands)
+	mux.HandleFunc("POST /api/v1/ingest/commands/{commandId}/ack", s.ackCommand)
 
 	c := cors.New(cors.Options{
 		AllowedOrigins:   s.cfg.CORSOrigins,
@@ -186,9 +190,12 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	payload.Transport = "http"
+	saveStart := time.Now()
 	readings, receivedAt, err := s.store.SaveTelemetry(ctx, payload)
 	if err != nil {
 		if errors.Is(err, store.ErrUnsupportedValue) || errors.Is(err, store.ErrCapabilityMismatch) {
+			s.logger.Warn("telemetry rejected", "device_id", payload.DeviceID, "error", err)
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -196,15 +203,19 @@ func (s *Server) handleTelemetry(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to save telemetry")
 		return
 	}
+	s.logger.Info("telemetry saved", "transport", "http", "device_id", payload.DeviceID,
+		"received_at", receivedAt, "readings", len(readings), "save_ms", time.Since(saveStart).Milliseconds())
 
 	for _, reading := range readings {
-		s.hub.Broadcast(hub.ReadingEvent{
+		result := s.hub.Broadcast(hub.ReadingEvent{
 			DeviceID:   payload.DeviceID,
 			Metric:     reading.Name,
 			Value:      store.ReadingValue(reading),
 			Type:       reading.Kind,
 			ReceivedAt: receivedAt,
 		})
+		s.logger.Info("telemetry broadcast", "device_id", payload.DeviceID, "metric", reading.Name,
+			"received_at", receivedAt, "subscribers", result.Subscribers, "queued", result.Queued, "dropped", result.Dropped)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
@@ -240,6 +251,7 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		limit = parsed
 	}
 
+	started := time.Now()
 	points, err := s.store.GetHistory(r.Context(), deviceID, metric, limit)
 	if err != nil {
 		if errors.Is(err, store.ErrUnknownMetric) {
@@ -250,6 +262,8 @@ func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to load history")
 		return
 	}
+	s.logger.Info("telemetry history loaded", "device_id", deviceID, "metric", metric,
+		"points", len(points), "duration_ms", time.Since(started).Milliseconds())
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
 		"device_id": deviceID,
@@ -300,6 +314,8 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 
 	events, unsubscribe := s.hub.Subscribe(deviceID)
 	defer unsubscribe()
+	s.logger.Info("websocket connected", "device_id", deviceID)
+	defer s.logger.Info("websocket disconnected", "device_id", deviceID)
 
 	conn.SetReadLimit(512)
 	_ = conn.SetReadDeadline(time.Now().Add(60 * time.Second))
@@ -312,6 +328,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		defer close(done)
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
+				s.logger.Info("websocket read ended", "device_id", deviceID, "error", err)
 				return
 			}
 		}
@@ -330,11 +347,20 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.TextMessage, msg); err != nil {
+				s.logger.Warn("websocket write failed", "device_id", deviceID, "error", err)
 				return
+			}
+			var event struct {
+				Metric     string    `json:"metric"`
+				ReceivedAt time.Time `json:"received_at"`
+			}
+			if json.Unmarshal(msg, &event) == nil {
+				s.logger.Info("websocket event sent", "device_id", deviceID, "metric", event.Metric, "received_at", event.ReceivedAt)
 			}
 		case <-pingTicker.C:
 			_ = conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 			if err := conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+				s.logger.Warn("websocket ping failed", "device_id", deviceID, "error", err)
 				return
 			}
 		}

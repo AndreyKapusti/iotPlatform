@@ -27,6 +27,9 @@ import {
   Person as PersonIcon,
   Search as SearchIcon,
   Settings as SettingsIcon,
+  AccountTree as AutomationIcon,
+  ViewQuilt as SharedDashboardIcon,
+  MonitorHeart as MonitoringIcon,
 } from '@mui/icons-material';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
@@ -67,6 +70,9 @@ export function AppShell({ wide = false }: AppShellProps) {
       { to: '/', label: t('nav.overview'), icon: <HomeIcon /> },
       { to: '/events', label: t('nav.events'), icon: <EventsIcon /> },
       { to: '/devices', label: t('nav.devices'), icon: <DashboardIcon /> },
+      { to: '/shared-dashboards', label: t('nav.sharedDashboards'), icon: <SharedDashboardIcon /> },
+      { to: '/automation', label: t('nav.automation'), icon: <AutomationIcon /> },
+      { to: '/monitoring', label: t('nav.monitoring'), icon: <MonitoringIcon /> },
       { to: '/profile', label: t('nav.profile'), icon: <PersonIcon /> },
       { to: '/settings', label: t('nav.settings'), icon: <SettingsIcon /> },
     ],

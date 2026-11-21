@@ -54,24 +54,29 @@ func (h *Hub) Subscribe(deviceID int) (<-chan []byte, func()) {
 	return sub.ch, unsubscribe
 }
 
-func (h *Hub) Broadcast(event ReadingEvent) {
+type BroadcastResult struct {
+	Subscribers int
+	Queued      int
+	Dropped     int
+}
+
+func (h *Hub) Broadcast(event ReadingEvent) BroadcastResult {
 	payload, err := json.Marshal(event)
 	if err != nil {
-		return
+		return BroadcastResult{}
 	}
 
 	h.mu.RLock()
+	defer h.mu.RUnlock()
 	subs := h.subscribers[event.DeviceID]
-	targets := make([]*subscriber, 0, len(subs))
+	result := BroadcastResult{Subscribers: len(subs)}
 	for sub := range subs {
-		targets = append(targets, sub)
-	}
-	h.mu.RUnlock()
-
-	for _, sub := range targets {
 		select {
 		case sub.ch <- payload:
+			result.Queued++
 		default:
+			result.Dropped++
 		}
 	}
+	return result
 }

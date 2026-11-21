@@ -4,6 +4,9 @@
     "tagline": "IoT device monitoring and live dashboards"
   },
   "nav": {
+    "monitoring": "Connection monitoring",
+    "automation": "Automation",
+    "sharedDashboards": "Shared dashboards",
     "overview": "Overview",
     "events": "Events",
     "devices": "Devices",
@@ -196,6 +199,11 @@
     "duplicatedSuccess": "Dashboard duplicated"
   },
   "widgets": {
+    "automaticMode": "Automatic control",
+    "modeUnavailable": "Control mode unavailable",
+    "commandPending": "Waiting for device confirmation",
+    "commandFailed": "Command not confirmed",
+    "commandAcknowledged": "Device confirmed command",
     "on": "ON",
     "off": "OFF",
     "historyError": "Failed to load history",

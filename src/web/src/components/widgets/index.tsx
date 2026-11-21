@@ -10,9 +10,11 @@ import {
 import { Box, Skeleton, Switch, Typography } from '@mui/material';
 import { useTranslation } from 'react-i18next';
 import type { Capability } from '../../types';
-import { useTelemetry } from '../../features/telemetry/hooks/useTelemetry';
+import { useTelemetry, useTelemetryDeviceId } from '../../features/telemetry/hooks/useTelemetry';
+import { useGetCommandQuery, useSendCommandMutation } from '../../features/telemetry/api/commandApi';
+import { isAutomatic, useGetModesQuery } from '../../features/automation/api';
 import i18n from '../../features/i18n/config';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 interface WidgetCommonProps {
   metric: string;
@@ -163,28 +165,39 @@ export function BooleanIndicatorWidget({ metric }: Pick<WidgetCommonProps, 'metr
 }
 
 export function ToggleWidget({ metric, accent }: WidgetCommonProps) {
+  const { t } = useTranslation();
+  const deviceId = useTelemetryDeviceId();
+  const { data: modes, isError: modesError } = useGetModesQuery(undefined, { pollingInterval: 5000 });
   const { latest, loading, error } = useTelemetry(metric);
-  const telemetryOn = latest != null ? Boolean(latest.value) : null;
-  const [localOn, setLocalOn] = useState<boolean | null>(null);
-  const lastSyncedRef = useRef<string | null>(null);
-
+  const [commandId, setCommandId] = useState<number | null>(null);
+  const [sendCommand, { isLoading: sending, error: sendError }] = useSendCommandMutation();
+  const { data: command, error: commandError } = useGetCommandQuery(
+    { deviceId, commandId: commandId ?? 0 },
+    { skip: commandId === null, pollingInterval: 1000 },
+  );
   useEffect(() => {
-    if (telemetryOn == null || !latest) return;
-    if (latest.received_at !== lastSyncedRef.current) {
-      lastSyncedRef.current = latest.received_at;
-      setLocalOn(telemetryOn);
-    }
-  }, [telemetryOn, latest]);
+    setCommandId(null);
+  }, [deviceId, metric]);
 
-  const isOn = localOn ?? telemetryOn ?? false;
+  const pending = sending || (commandId !== null && !command && !commandError) || command?.status === 'pending';
+  const ackNewer = command?.status === 'acknowledged' && command.acknowledged_at &&
+    (!latest || new Date(latest.received_at).getTime() < new Date(command.acknowledged_at).getTime());
+  const isOn = ackNewer ? command.value : Boolean(latest?.value);
+  const failure = Boolean(sendError || commandError || command?.status === 'expired' || command?.status === 'superseded');
 
   if (loading && !latest) return <WidgetLoading />;
   if (error) return <WidgetError message={error} />;
 
   return (
+    <Box sx={{ display: 'flex', alignItems: 'center', flexDirection: 'column' }}>
     <Switch
       checked={isOn}
-      onChange={() => setLocalOn(!isOn)}
+      disabled={pending || !modes || modesError || isAutomatic(modes, deviceId, metric) || (!latest && !ackNewer)}
+      onChange={async (_, checked) => {
+        setCommandId(null);
+        try { const result = await sendCommand({ deviceId, metric, value: checked }).unwrap(); setCommandId(result.id); }
+        catch { /* The error is shown below the switch. */ }
+      }}
       sx={{
         '& .MuiSwitch-switchBase.Mui-checked': { color: accent ?? 'primary.main' },
         '& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track': {
@@ -192,5 +205,11 @@ export function ToggleWidget({ metric, accent }: WidgetCommonProps) {
         },
       }}
     />
+    {pending && <Typography variant="caption">{t('widgets.commandPending')}</Typography>}
+    {modesError && <Typography variant="caption" color="error">{t('widgets.modeUnavailable')}</Typography>}
+    {modes && isAutomatic(modes, deviceId, metric) && <Typography variant="caption">{t('widgets.automaticMode')}</Typography>}
+    {failure && <Typography variant="caption" color="error">{t('widgets.commandFailed')}</Typography>}
+    {command?.status === 'acknowledged' && <Typography variant="caption">{t('widgets.commandAcknowledged')}</Typography>}
+    </Box>
   );
 }

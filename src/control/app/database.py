@@ -24,7 +24,60 @@ class Database:
         )
         await self.pool.open()
         await self._migrate_users_profile()
+        await self._migrate_automation()
         logger.info("Database pool opened")
+
+    async def _migrate_automation(self) -> None:
+        await self.execute("""
+            CREATE TABLE IF NOT EXISTS automation_rules (
+                id BIGSERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, enabled BOOLEAN NOT NULL DEFAULT TRUE, priority BIGINT NOT NULL,
+                definition JSONB NOT NULL, freshness_seconds INTEGER NOT NULL DEFAULT 30,
+                delay_seconds INTEGER NOT NULL DEFAULT 0, created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), state TEXT NOT NULL DEFAULT 'waiting',
+                candidate BOOLEAN, candidate_since TIMESTAMPTZ, stable_value BOOLEAN,
+                evaluated_at TIMESTAMPTZ, error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS automation_rules_owner_idx ON automation_rules(user_id, priority, id);
+            CREATE TABLE IF NOT EXISTS automation_rule_targets (
+                rule_id BIGINT NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+                device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE,
+                metric TEXT NOT NULL, branch BOOLEAN NOT NULL, value BOOLEAN NOT NULL,
+                PRIMARY KEY(rule_id, device_id, metric, branch)
+            );
+            CREATE INDEX IF NOT EXISTS automation_targets_device_idx ON automation_rule_targets(device_id,metric);
+            CREATE TABLE IF NOT EXISTS automation_modes (
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                scope TEXT NOT NULL CHECK(scope IN ('account','device','actuator')),
+                device_id INTEGER NOT NULL DEFAULT 0, metric TEXT NOT NULL DEFAULT '',
+                mode TEXT NOT NULL CHECK(mode IN ('auto','manual')),
+                PRIMARY KEY(user_id, scope, device_id, metric)
+            );
+            CREATE TABLE IF NOT EXISTS automation_intents (
+                device_id INTEGER NOT NULL REFERENCES devices(id) ON DELETE CASCADE, metric TEXT NOT NULL,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                rule_id BIGINT NOT NULL REFERENCES automation_rules(id) ON DELETE CASCADE,
+                value BOOLEAN NOT NULL, valid_until TIMESTAMPTZ NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                PRIMARY KEY(device_id,metric)
+            );
+            CREATE TABLE IF NOT EXISTS automation_events (
+                id BIGSERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                rule_id BIGINT REFERENCES automation_rules(id) ON DELETE SET NULL,
+                device_id INTEGER, metric TEXT, event TEXT NOT NULL, details JSONB NOT NULL DEFAULT '{}',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS automation_device_polls (
+                device_id INTEGER PRIMARY KEY REFERENCES devices(id) ON DELETE CASCADE,
+                last_poll_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS shared_dashboards (
+                id BIGSERIAL PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                name TEXT NOT NULL, layout_json JSONB NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(), updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(user_id,name)
+            );
+        """)
 
     async def _migrate_users_profile(self) -> None:
         migrations = [

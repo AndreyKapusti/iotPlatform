@@ -14,7 +14,7 @@ export function buildConnectionSnippets(deviceId: number, apiKey: string): Conne
     curlTelemetry: `curl -X POST ${base}/api/v1/ingest/telemetry \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: ${apiKey}" \\
-  -d '{"device_id":${deviceId},"readings":[{"metric":"temperature","value":22.5,"type":"number"}]}'`,
+  -d '{"device_id":${deviceId},"readings":{"temperature":22.5}}'`,
     curlAnnounce: `curl -X POST ${base}/api/v1/ingest/announce \\
   -H "Content-Type: application/json" \\
   -H "X-API-Key: ${apiKey}" \\

@@ -43,6 +43,7 @@ type TelemetryPayload struct {
 	Readings  map[string]interface{} `json:"readings"`
 	Metadata  map[string]interface{} `json:"metadata,omitempty"`
 	APIKey    string                 `json:"api_key,omitempty"`
+	Transport string                 `json:"-"`
 }
 
 type HistoryPoint struct {
@@ -95,6 +96,13 @@ func (s *Store) SaveAnnounce(ctx context.Context, payload AnnouncePayload) error
 		return fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	var ownerID int64
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM devices WHERE id=$1`, payload.DeviceID).Scan(&ownerID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, 800000000000+ownerID); err != nil {
+		return err
+	}
 
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM device_capabilities WHERE device_id = $1`,
@@ -137,6 +145,18 @@ func (s *Store) SaveAnnounce(ctx context.Context, payload AnnouncePayload) error
 		payload.DeviceID,
 	); err != nil {
 		return fmt.Errorf("update last_seen_at: %w", err)
+	}
+	var hasAutomation bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('public.automation_intents') IS NOT NULL`).Scan(&hasAutomation); err != nil {
+		return err
+	}
+	if hasAutomation {
+		if _, err := tx.Exec(ctx, `UPDATE automation_intents SET valid_until=LEAST(valid_until,now()) WHERE user_id=$1`, ownerID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify('signaldeck_telemetry', $1)`, fmt.Sprint(ownerID)); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)
@@ -278,6 +298,13 @@ func (s *Store) SaveTelemetry(ctx context.Context, payload TelemetryPayload) ([]
 		return nil, time.Time{}, fmt.Errorf("begin tx: %w", err)
 	}
 	defer tx.Rollback(ctx)
+	var ownerID int64
+	if err := tx.QueryRow(ctx, `SELECT user_id FROM devices WHERE id=$1`, payload.DeviceID).Scan(&ownerID); err != nil {
+		return nil, time.Time{}, err
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, 800000000000+ownerID); err != nil {
+		return nil, time.Time{}, err
+	}
 
 	for _, cr := range classified {
 		switch cr.Kind {
@@ -306,12 +333,47 @@ func (s *Store) SaveTelemetry(ctx context.Context, payload TelemetryPayload) ([]
 			return nil, time.Time{}, fmt.Errorf("insert metric %q: %w", cr.Name, err)
 		}
 	}
+	// Persist only diagnostic fields, never arbitrary metadata or credentials.
+	monitor := map[string]interface{}{}
+	for _, key := range []string{"sample_sequence", "uptime_ms", "wifi_rssi", "mqtt_reconnects", "publish_errors"} {
+		if n, ok := payload.Metadata[key].(float64); ok && n >= -1000 && n <= 1e12 {
+			monitor[key] = n
+		}
+	}
+	if boot, ok := payload.Metadata["boot_id"].(string); ok && len(boot) > 0 && len(boot) <= 64 {
+		monitor["boot_id"] = boot
+	}
+	monitorJSON, err := json.Marshal(monitor)
+	if err != nil {
+		return nil, time.Time{}, err
+	}
+	transport := payload.Transport
+	if transport != "mqtt" && transport != "http" {
+		transport = "unknown"
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO device_monitor_samples(device_id,received_at,transport,metadata) VALUES($1,$2,$3,$4::jsonb)`, payload.DeviceID, receivedAt, transport, string(monitorJSON)); err != nil {
+		return nil, time.Time{}, fmt.Errorf("insert monitoring sample: %w", err)
+	}
 
 	if _, err := tx.Exec(ctx,
-		`UPDATE devices SET last_seen_at = $2 WHERE id = $1`,
+		`UPDATE devices SET last_seen_at = GREATEST(last_seen_at, $2) WHERE id = $1`,
 		payload.DeviceID, receivedAt,
 	); err != nil {
 		return nil, time.Time{}, fmt.Errorf("update last_seen_at: %w", err)
+	}
+	// Prevent an automatic command computed from an older observation being
+	// handed to a device before the evaluator has processed this transaction.
+	var hasAutomation bool
+	if err := tx.QueryRow(ctx, `SELECT to_regclass('public.automation_intents') IS NOT NULL`).Scan(&hasAutomation); err != nil {
+		return nil, time.Time{}, err
+	}
+	if hasAutomation {
+		if _, err := tx.Exec(ctx, `UPDATE automation_intents SET valid_until=LEAST(valid_until,now()) WHERE user_id=(SELECT user_id FROM devices WHERE id=$1)`, payload.DeviceID); err != nil {
+			return nil, time.Time{}, err
+		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify('signaldeck_telemetry', $1)`, fmt.Sprint(ownerID)); err != nil {
+		return nil, time.Time{}, err
 	}
 
 	if err := tx.Commit(ctx); err != nil {

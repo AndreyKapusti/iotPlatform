@@ -47,7 +47,7 @@ python main.py
 1. **Register** — `POST /api/v1/auth/register`. Если пользователь уже есть — игнор, переход к login.
 2. **Login** — `POST /api/v1/auth/login`, JWT для control API.
 3. **Device** — `GET /api/v1/devices/`; если имя найдено — reuse, иначе `POST /api/v1/devices/`.
-4. Печать `device_id` и `api_key`.
+4. Печать `device_id`.
 5. **Announce** capabilities (HTTP или MQTT).
 6. **Loop** — телеметрия с random `temperature`, `humidity`, `motion`, `relay_1`.
 

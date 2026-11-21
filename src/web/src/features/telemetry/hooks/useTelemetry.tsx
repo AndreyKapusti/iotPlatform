@@ -22,6 +22,7 @@ interface MetricState {
 }
 
 interface TelemetryContextValue {
+  deviceId: number;
   connected: boolean;
   live: boolean;
   setLive: (live: boolean) => void;
@@ -29,6 +30,11 @@ interface TelemetryContextValue {
 }
 
 const TelemetryContext = createContext<TelemetryContextValue | null>(null);
+
+// Metadata only: timestamps and metric names allow matching browser events to ingest logs.
+function telemetryLog(event: string, details: Record<string, unknown>) {
+  console.info('[telemetry]', new Date().toISOString(), event, details);
+}
 
 function normalizePoint(event: ReadingEvent): HistoryPoint {
   return {
@@ -68,6 +74,16 @@ export function TelemetryProvider({
   onReadingRef.current = onReading;
   const metricsKey = metrics.join(',');
 
+  useEffect(() => {
+    for (const [metric, state] of Object.entries(metricMap)) {
+      if (state.latest) {
+        telemetryLog('chart state committed', {
+          deviceId, metric, receivedAt: state.latest.received_at, points: state.points.length,
+        });
+      }
+    }
+  }, [deviceId, metricMap]);
+
   const updateMetric = useCallback((metric: string, updater: (prev: MetricState) => MetricState) => {
     setMetricMap((prev) => {
       const current = prev[metric] ?? {
@@ -82,6 +98,7 @@ export function TelemetryProvider({
 
   const refreshMetric = useCallback(
     async (metric: string) => {
+      const started = performance.now();
       updateMetric(metric, (prev) => ({ ...prev, loading: true, error: null }));
       try {
         const result = await store.dispatch(
@@ -95,13 +112,16 @@ export function TelemetryProvider({
         }
         const data = result.data!;
         const points = filterPointsByRange([...data.points].reverse(), historyRangeMs);
+        telemetryLog('history loaded', { deviceId, metric, points: points.length,
+          durationMs: Math.round(performance.now() - started), latest: points[points.length - 1]?.received_at });
         updateMetric(metric, () => ({
           points,
           latest: points.length > 0 ? points[points.length - 1] : null,
           loading: false,
           error: null,
         }));
-      } catch {
+      } catch (error) {
+        console.warn('[telemetry] history failed', { deviceId, metric, error });
         updateMetric(metric, (prev) => ({
           ...prev,
           loading: false,
@@ -135,16 +155,19 @@ export function TelemetryProvider({
 
     const connect = () => {
       if (cancelled) return;
+      telemetryLog('websocket connecting', { deviceId });
       const ws = new WebSocket(getWebSocketUrl(deviceId));
       wsRef.current = ws;
 
       ws.onopen = () => {
+        telemetryLog('websocket connected', { deviceId });
         if (!cancelled) setConnected(true);
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data as string) as ReadingEvent;
+          telemetryLog('websocket event received', { deviceId, metric: data.metric, receivedAt: data.received_at });
           const point = normalizePoint(data);
           onReadingRef.current?.(data);
           updateMetric(data.metric, (prev) => {
@@ -156,12 +179,13 @@ export function TelemetryProvider({
               error: null,
             };
           });
-        } catch {
-          /* ignore malformed */
+        } catch (error) {
+          console.warn('[telemetry] event processing failed', { deviceId, error });
         }
       };
 
-      ws.onclose = () => {
+      ws.onclose = (event) => {
+        telemetryLog('websocket closed', { deviceId, code: event.code, clean: event.wasClean, reconnecting: !cancelled });
         setConnected(false);
         wsRef.current = null;
         if (!cancelled) {
@@ -169,7 +193,10 @@ export function TelemetryProvider({
         }
       };
 
-      ws.onerror = () => ws.close();
+      ws.onerror = () => {
+        console.warn('[telemetry] websocket error', { deviceId });
+        ws.close();
+      };
     };
 
     connect();
@@ -193,8 +220,8 @@ export function TelemetryProvider({
   );
 
   const value = useMemo(
-    () => ({ connected, live, setLive, getMetric }),
-    [connected, live, getMetric],
+    () => ({ deviceId, connected, live, setLive, getMetric }),
+    [deviceId, connected, live, getMetric],
   );
 
   return <TelemetryContext.Provider value={value}>{children}</TelemetryContext.Provider>;
@@ -210,4 +237,10 @@ export function useTelemetryControls() {
   const ctx = useContext(TelemetryContext);
   if (!ctx) throw new Error('useTelemetryControls must be used within TelemetryProvider');
   return { connected: ctx.connected, live: ctx.live, setLive: ctx.setLive };
+}
+
+export function useTelemetryDeviceId() {
+  const ctx = useContext(TelemetryContext);
+  if (!ctx) throw new Error('useTelemetryDeviceId must be used within TelemetryProvider');
+  return ctx.deviceId;
 }

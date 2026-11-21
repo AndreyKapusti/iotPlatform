@@ -1,63 +1,43 @@
-"""MQTT auth contract: key in the JSON, shared broker user, ACL hides telemetry."""
-
-from __future__ import annotations
-
-import os
+"""The simulator must not execute stale, retained or unsolicited commands."""
+import json
+import time
 import unittest
-from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import Mock
 
 import main
 
 
-ACL_PATH = Path(__file__).resolve().parents[1] / "deploy" / "mosquitto" / "acl"
-
-
-def acl_rules(text: str) -> list[tuple[str, str, str]]:
-    user = ""
-    rules: list[tuple[str, str, str]] = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if line.startswith("user "):
-            user = line.split(None, 1)[1]
-            continue
-        parts = line.split()
-        if parts[0] == "topic" and len(parts) == 3:
-            rules.append((user, parts[1], parts[2]))
-    return rules
-
-
 class MqttContractTest(unittest.TestCase):
-    def test_publish_body_contains_api_key(self) -> None:
-        payload = {"device_id": 7, "readings": {"temperature": 21.5}}
-        body = main.attach_api_key(payload, "device-key")
-        self.assertEqual(body["api_key"], "device-key")
-        self.assertEqual(body["device_id"], 7)
+    def setUp(self):
+        self.sim = main.IngestMqttClient.__new__(main.IngestMqttClient)
+        self.sim.device_id = 7
+        self.sim.api_key = "test-key"
+        self.sim.relay_state = False
+        self.sim.nonce = "current"
+        self.sim.poll_started = time.monotonic()
+        self.sim.client = Mock()
+
+    def deliver(self, nonce="current", remaining_ms=1000, retain=False):
+        payload = {"nonce": nonce, "commands": [{"id": 42, "metric": "relay_1", "value": True, "remaining_ms": remaining_ms}]}
+        self.sim._on_message(None, None, SimpleNamespace(payload=json.dumps(payload).encode(), retain=retain))
+
+    def test_current_command_applied_and_acknowledged(self):
+        self.deliver()
+        self.assertTrue(self.sim.relay_state)
+        self.sim.client.publish.assert_called_once()
+
+    def test_stale_and_retained_responses_are_ignored(self):
+        self.deliver(nonce="old")
+        self.deliver(remaining_ms=0)
+        self.deliver(retain=True)
+        self.assertFalse(self.sim.relay_state)
+        self.sim.client.publish.assert_not_called()
+
+    def test_key_is_attached_without_mutating_payload(self):
+        payload = {"device_id": 7}
+        self.assertEqual(main.attach_api_key(payload, "key"), {"device_id": 7, "api_key": "key"})
         self.assertNotIn("api_key", payload)
-
-    def test_key_refresh_keeps_broker_username(self) -> None:
-        self.assertEqual(main.broker_username_after_refresh("devices", "rotated-key"), "devices")
-
-    def test_config_defaults_to_devices_user(self) -> None:
-        previous_user = os.environ.pop("MQTT_USERNAME", None)
-        previous_password = os.environ.pop("MQTT_PASSWORD", None)
-        try:
-            cfg = main.Config()
-            self.assertEqual(cfg.mqtt_username, "devices")
-            self.assertEqual(cfg.mqtt_password, "signaldeck-devices")
-        finally:
-            if previous_user is not None:
-                os.environ["MQTT_USERNAME"] = previous_user
-            if previous_password is not None:
-                os.environ["MQTT_PASSWORD"] = previous_password
-
-    def test_devices_user_cannot_read_telemetry(self) -> None:
-        rules = acl_rules(ACL_PATH.read_text(encoding="utf-8"))
-        device_reads = [topic for user, access, topic in rules if user == "devices" and access == "read"]
-        self.assertFalse(any("telemetry" in topic for topic in device_reads))
-        ingest_reads = [topic for user, access, topic in rules if user == "ingest" and access == "read"]
-        self.assertTrue(any(topic.endswith("/telemetry") for topic in ingest_reads))
 
 
 if __name__ == "__main__":

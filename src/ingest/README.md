@@ -21,7 +21,7 @@ Go-сервис data plane: приём announce/telemetry по MQTT и HTTP, з�
 - `devices/{device_id}/announce` — схема capabilities
 - `devices/{device_id}/telemetry` — readings
 
-В JSON payload обязателен `api_key`. `device_id` в топике должен совпадать с полем в теле. Брокер пускает издателя как пользователя `devices` и не даёт ему читать telemetry: ключ в JSON видит только подписчик `ingest`.
+В JSON payload обязателен `api_key`. `device_id` в топике должен совпадать с полем в теле. Для MQTT имя пользователя равно `device_id`, пароль — `api_key`; устройство имеет доступ только к своим топикам. Подробности — в [описании MQTT](../docs/features/mqtt-device-transport.md).
 
 ## HTTP API
 

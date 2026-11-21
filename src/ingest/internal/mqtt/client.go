@@ -46,6 +46,18 @@ func brokerOptions(brokerURL, username, password string) *paho.ClientOptions {
 
 func (c *Client) Connect(ctx context.Context, brokerURL, username, password string) (paho.Client, error) {
 	opts := brokerOptions(brokerURL, username, password)
+	opts.SetOrderMatters(false)
+	opts.SetOnConnectHandler(func(client paho.Client) {
+		for topic, handler := range map[string]paho.MessageHandler{
+			"devices/+/announce": c.onAnnounce, "devices/+/telemetry": c.onTelemetry,
+			"devices/+/poll": c.onPoll, "devices/+/ack": c.onAck,
+		} {
+			t := client.Subscribe(topic, 1, handler)
+			if !t.WaitTimeout(5*time.Second) || t.Error() != nil {
+				c.logger.Error("mqtt subscribe failed", "topic", topic)
+			}
+		}
+	})
 	client := paho.NewClient(opts)
 	token := client.Connect()
 	if !token.WaitTimeout(10 * time.Second) {
@@ -55,17 +67,28 @@ func (c *Client) Connect(ctx context.Context, brokerURL, username, password stri
 		return nil, fmt.Errorf("mqtt connect: %w", err)
 	}
 
-	if token := client.Subscribe("devices/+/announce", 1, c.onAnnounce); token.Wait() && token.Error() != nil {
-		client.Disconnect(250)
-		return nil, fmt.Errorf("subscribe announce: %w", token.Error())
-	}
-	if token := client.Subscribe("devices/+/telemetry", 1, c.onTelemetry); token.Wait() && token.Error() != nil {
-		client.Disconnect(250)
-		return nil, fmt.Errorf("subscribe telemetry: %w", token.Error())
-	}
-
 	c.logger.Info("mqtt connected", "broker", brokerURL)
+	go c.listenForWake(ctx, client)
 	return client, nil
+}
+
+func (c *Client) listenForWake(ctx context.Context, client paho.Client) {
+	for ctx.Err() == nil {
+		err := c.store.ListenCommandWake(ctx, func(deviceID int) {
+			if client.IsConnectionOpen() {
+				client.Publish(fmt.Sprintf("devices/%d/command", deviceID), 0, false, `{"wake":true}`)
+			}
+		})
+		if ctx.Err() != nil {
+			return
+		}
+		c.logger.Warn("mqtt command wake listener disconnected", "error", err)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Second):
+		}
+	}
 }
 
 func parseTopicDeviceID(topic string) (int, error) {
@@ -157,6 +180,8 @@ func (c *Client) onTelemetry(_ paho.Client, msg paho.Message) {
 		return
 	}
 
+	payload.Transport = "mqtt"
+	saveStart := time.Now()
 	classified, receivedAt, err := c.store.SaveTelemetry(ctx, payload)
 	if err != nil {
 		if errors.Is(err, store.ErrCapabilityMismatch) || errors.Is(err, store.ErrUnsupportedValue) {
@@ -166,14 +191,18 @@ func (c *Client) onTelemetry(_ paho.Client, msg paho.Message) {
 		c.logger.Error("telemetry save failed", "device_id", payload.DeviceID, "error", err)
 		return
 	}
+	c.logger.Info("telemetry saved", "transport", "mqtt", "device_id", payload.DeviceID,
+		"received_at", receivedAt, "readings", len(classified), "save_ms", time.Since(saveStart).Milliseconds())
 
 	for _, reading := range classified {
-		c.hub.Broadcast(hub.ReadingEvent{
+		result := c.hub.Broadcast(hub.ReadingEvent{
 			DeviceID:   payload.DeviceID,
 			Metric:     reading.Name,
 			Value:      store.ReadingValue(reading),
 			Type:       reading.Kind,
 			ReceivedAt: receivedAt,
 		})
+		c.logger.Info("telemetry broadcast", "device_id", payload.DeviceID, "metric", reading.Name,
+			"received_at", receivedAt, "subscribers", result.Subscribers, "queued", result.Queued, "dropped", result.Dropped)
 	}
 }

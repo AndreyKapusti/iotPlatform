@@ -38,6 +38,20 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			if _, err := pool.Exec(ctx, `DELETE FROM device_monitor_samples WHERE received_at < now() - interval '7 days'`); err != nil && ctx.Err() == nil {
+				logger.Warn("monitor retention cleanup failed", "error", err)
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+		}
+	}()
 
 	st := store.New(pool)
 	wsHub := hub.New()
@@ -48,6 +62,10 @@ func main() {
 		logger.Warn("JWT_SECRET is empty; history and websocket reject every caller")
 	}
 
+	if err = mqttclient.StartSecurity(ctx, st, cfg.MQTTBroker, os.Getenv("MQTT_ADMIN_PASSWORD"), cfg.MQTTUsername, cfg.MQTTPassword, logger); err != nil {
+		logger.Error("mqtt security setup failed", "error", err)
+		os.Exit(1)
+	}
 	mqttClient, err = mqtt.Connect(ctx, cfg.MQTTBroker, cfg.MQTTUsername, cfg.MQTTPassword)
 	if err != nil {
 		logger.Error("mqtt connect failed", "error", err)

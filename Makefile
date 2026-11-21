@@ -2,7 +2,7 @@ COMPOSE_DIR := src/deploy
 COMPOSE := docker compose -f $(COMPOSE_DIR)/docker-compose.yml --project-directory $(COMPOSE_DIR)
 WEB_DIR := src/web
 
-.PHONY: help start dev stop restart logs ps install build-web
+.PHONY: help start dev stop restart logs ps install build-web usb-monitor
 
 help: ## Показать команды
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  \033[36m%-12s\033[0m %s\n", $$1, $$2}'
@@ -40,3 +40,6 @@ ps: ## Статус контейнеров
 build-web: ## Пересобрать Docker-образ UI
 	$(COMPOSE) build web
 	$(COMPOSE) up -d web
+
+usb-monitor: ## Start the local ESP32 USB monitor
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "$$venv = Join-Path (Get-Location) '.tools/usb-monitor-venv'; $$python = Join-Path $$venv 'Scripts/python.exe'; if (-not (Test-Path -LiteralPath $$python)) { python -m venv $$venv; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE } }; & $$python -m pip install -q -r 'src/serial-monitor/requirements.txt'; if ($$LASTEXITCODE -ne 0) { exit $$LASTEXITCODE }; & $$python 'src/serial-monitor/app.py'"

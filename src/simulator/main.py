@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import random
+import secrets
 import signal
 import sys
 import time
@@ -71,8 +72,6 @@ class Config:
     password: str
     interval_sec: float
     use_mqtt: bool
-    mqtt_username: str
-    mqtt_password: str
 
     def __init__(self) -> None:
         self.control_url = os.getenv("CONTROL_URL", "http://localhost:8000").rstrip("/")
@@ -88,8 +87,6 @@ class Config:
         self.password = os.getenv("SIGNALDECK_PASSWORD", os.getenv("PASSWORD", "admin123"))
         self.interval_sec = env_float("INTERVAL_SEC", 2.0)
         self.use_mqtt = env_bool("USE_MQTT", False)
-        self.mqtt_username = os.getenv("MQTT_USERNAME", "devices")
-        self.mqtt_password = os.getenv("MQTT_PASSWORD", "signaldeck-devices")
 
 
 class ControlClient:
@@ -203,19 +200,12 @@ def attach_api_key(payload: dict[str, Any], api_key: str) -> dict[str, Any]:
     return body
 
 
-def broker_username_after_refresh(broker_username: str, _api_key: str) -> str:
-    """Key rotation updates the JSON key, not the shared broker login."""
-    return broker_username
-
-
 class IngestMqttClient:
     def __init__(
         self,
         broker: str,
         device_id: int,
         api_key: str,
-        broker_username: str,
-        broker_password: str,
     ) -> None:
         try:
             import paho.mqtt.client as mqtt
@@ -229,20 +219,38 @@ class IngestMqttClient:
         port = int(port_str or "1883")
         self.device_id = device_id
         self.api_key = api_key
-        self.broker_username = broker_username
-        self.broker_password = broker_password
+        self.broker_username = str(device_id)
         self.relay_state = False
+        self.nonce = ""
+        self.poll_started = 0.0
+        self.announce_payload = None
 
         self.client = mqtt.Client(
             client_id=f"simulator-{device_id}",
             protocol=mqtt.MQTTv311,
         )
-        self.client.username_pw_set(username=broker_username, password=broker_password)
+        self.client.username_pw_set(username=self.broker_username, password=api_key)
+        self.client.on_connect = self._on_connect
         self.client.on_message = self._on_message
-        self.client.connect(host, port, keepalive=60)
-        self.client.subscribe(f"devices/{device_id}/command")
+        self.client.reconnect_delay_set(1, 5)
+        self.client.connect_async(host, port, keepalive=60)
         self.client.loop_start()
-        print(f"[ingest] MQTT connected to {host}:{port}")
+        print(f"[ingest] Connecting MQTT to {host}:{port}")
+
+    def _on_connect(self, client: Any, _userdata: Any, _flags: Any, rc: Any) -> None:
+        if rc != 0:
+            print(f"[ingest] MQTT connection refused: {rc}")
+            return
+        client.subscribe(f"devices/{self.device_id}/command")
+        if self.announce_payload:
+            self.announce(self.announce_payload)
+        self.poll()
+
+    def poll(self) -> None:
+        self.nonce = secrets.token_hex(12)
+        self.poll_started = time.monotonic()
+        body = {"device_id": self.device_id, "api_key": self.api_key, "nonce": self.nonce}
+        self.client.publish(f"devices/{self.device_id}/poll", json.dumps(body), qos=0)
 
     def _on_message(self, _client: Any, _userdata: Any, msg: Any) -> None:
         try:
@@ -251,11 +259,26 @@ class IngestMqttClient:
             print(f"[ingest] Invalid command payload on {msg.topic}")
             return
 
-        if "relay_1" in data:
-            self.relay_state = bool(data["relay_1"])
+        if msg.retain:
+            return
+        if data.get("wake") is True:
+            self.poll()
+            return
+        if data.get("nonce") != self.nonce or not self.nonce:
+            return
+        self.nonce = ""
+        for command in data.get("commands", []):
+            if (command.get("metric") != "relay_1" or type(command.get("value")) is not bool or
+                type(command.get("id")) is not int or type(command.get("remaining_ms")) is not int or
+                (time.monotonic() - self.poll_started) * 1000 >= command["remaining_ms"]):
+                continue
+            self.relay_state = command["value"]
+            ack = {"device_id": self.device_id, "api_key": self.api_key, "id": command["id"], "value": self.relay_state}
+            self.client.publish(f"devices/{self.device_id}/ack", json.dumps(ack), qos=1)
             print(f"[ingest] Command relay_1 -> {self.relay_state}")
 
     def announce(self, payload: dict[str, Any]) -> None:
+        self.announce_payload = payload
         topic = f"devices/{self.device_id}/announce"
         body = attach_api_key(payload, self.api_key)
         self.client.publish(topic, json.dumps(body), qos=1)
@@ -265,6 +288,7 @@ class IngestMqttClient:
         topic = f"devices/{self.device_id}/telemetry"
         body = attach_api_key(payload, self.api_key)
         self.client.publish(topic, json.dumps(body), qos=0)
+        self.poll()
 
     def stop(self) -> None:
         self.client.loop_stop()
@@ -292,7 +316,6 @@ class DeviceSimulator:
         api_key = str(device["api_key"])
         self._device_id = device_id
         print(f"[simulator] device_id={device_id}")
-        print(f"[simulator] api_key={api_key}")
 
         announce_payload = {
             "device_id": device_id,
@@ -306,8 +329,6 @@ class DeviceSimulator:
                 self.cfg.mqtt_broker,
                 device_id,
                 api_key,
-                self.cfg.mqtt_username,
-                self.cfg.mqtt_password,
             )
             self.mqtt.announce(announce_payload)
             return device_id, api_key
@@ -329,8 +350,7 @@ class DeviceSimulator:
                     self._http.api_key = api_key
                 if self.mqtt:
                     self.mqtt.api_key = api_key
-                    username = broker_username_after_refresh(self.mqtt.broker_username, api_key)
-                    self.mqtt.client.username_pw_set(username, self.mqtt.broker_password)
+                    self.mqtt.client.username_pw_set(self.mqtt.broker_username, api_key)
                 return True
         return False
 

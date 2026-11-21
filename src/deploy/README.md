@@ -29,7 +29,7 @@ docker compose --profile demo up --build -d
 
 ## Брокер
 
-Mosquitto не принимает анонимные соединения. Entrypoint собирает парольный файл из `MQTT_INGEST_PASSWORD` и `MQTT_DEVICE_PASSWORD`. Пользователь `ingest` только читает announce/telemetry. Пользователь `devices` только публикует их и читает command. Файл паролей в git не хранится.
+Mosquitto использует отдельные учётные данные для каждого устройства и ограничивает доступ его собственными топиками. До запуска создайте src/deploy/.env с секретами: см. [настройку MQTT](../docs/features/mqtt-device-transport.md).
 
 Чтение history и WebSocket на ingest требует тот же `JWT_SECRET`, что и control.
 

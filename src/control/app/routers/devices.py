@@ -1,4 +1,5 @@
 import secrets
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -102,17 +103,49 @@ async def get_device(
     return DeviceDetail(**device)
 
 
+@router.get("/{device_id}/monitoring")
+async def device_monitoring(device_id: int, include_events: bool = False, current_user: dict = Depends(get_current_user)) -> dict:
+    await _get_user_device(device_id, current_user["id"])
+    latest = await db.fetch_one("""SELECT received_at, transport, metadata
+        FROM device_monitor_samples WHERE device_id=%s ORDER BY received_at DESC, id DESC LIMIT 1""", device_id)
+    points = await db.fetch_all("""SELECT received_at, transport, metadata FROM (
+        SELECT id, received_at, transport, metadata FROM device_monitor_samples
+        WHERE device_id=%s AND received_at>now()-interval '30 minutes'
+        ORDER BY received_at DESC, id DESC LIMIT 1800) p ORDER BY received_at, id""", device_id)
+    events = await db.fetch_all("""WITH samples AS (
+        SELECT id,received_at,metadata,
+        lag(received_at) OVER (ORDER BY received_at,id) AS previous_at,
+        lag(metadata) OVER (ORDER BY received_at,id) AS previous_metadata
+        FROM device_monitor_samples WHERE device_id=%s AND received_at>now()-interval '24 hours'
+        ), changes AS (
+        SELECT received_at, previous_at, metadata, previous_metadata,
+        extract(epoch FROM received_at-previous_at) AS gap_seconds FROM samples
+        )
+        SELECT received_at, previous_at, gap_seconds, metadata, previous_metadata FROM changes
+        WHERE gap_seconds > 5 OR (
+            metadata->>'boot_id'=previous_metadata->>'boot_id'
+            AND jsonb_typeof(metadata->'mqtt_reconnects')='number'
+            AND jsonb_typeof(previous_metadata->'mqtt_reconnects')='number'
+            AND (metadata->>'mqtt_reconnects')::numeric > (previous_metadata->>'mqtt_reconnects')::numeric
+        ) OR (metadata ? 'boot_id' AND previous_metadata ? 'boot_id' AND metadata->>'boot_id'<>previous_metadata->>'boot_id')
+        ORDER BY received_at DESC LIMIT 100""", device_id) if include_events else []
+    return {"server_time": datetime.now(timezone.utc), "latest": latest, "samples": points, "events": events,
+            "retention_days": 7}
+
+
 @router.delete("/{device_id}", status_code=status.HTTP_200_OK)
 async def delete_device(
     device_id: int,
     current_user: dict = Depends(get_current_user),
 ) -> dict:
     await _get_user_device(device_id, current_user["id"])
-    await db.execute(
-        "DELETE FROM devices WHERE id = %s AND user_id = %s",
-        device_id,
-        current_user["id"],
-    )
+    async with db.transaction() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute("SELECT pg_advisory_xact_lock(%s)", (800000000000 + current_user["id"],))
+            await cur.execute("UPDATE automation_intents SET valid_until=LEAST(valid_until,now()) WHERE user_id=%s", (current_user["id"],))
+            await cur.execute("UPDATE device_commands SET status='superseded' WHERE automation_rule_id IS NOT NULL AND status='pending' AND device_id IN (SELECT id FROM devices WHERE user_id=%s)", (current_user["id"],))
+            await cur.execute("DELETE FROM devices WHERE id=%s AND user_id=%s", (device_id, current_user["id"]))
+            await cur.execute("SELECT pg_notify('signaldeck_telemetry', %s)", (str(current_user["id"]),))
     return {"status": "ok", "message": "Device deleted"}
 
 
@@ -185,6 +218,7 @@ async def replace_capabilities(
 
     async with db.transaction() as conn:
         async with conn.cursor() as cur:
+            await cur.execute("SELECT pg_advisory_xact_lock(%s)", (800000000000 + current_user["id"],))
             await cur.execute(
                 "DELETE FROM device_capabilities WHERE device_id = %s",
                 (device_id,),
@@ -199,5 +233,8 @@ async def replace_capabilities(
                     """,
                     insert_params,
                 )
+
+            await cur.execute("UPDATE automation_intents SET valid_until=LEAST(valid_until,now()) WHERE user_id=%s", (current_user["id"],))
+            await cur.execute("SELECT pg_notify('signaldeck_telemetry', %s)", (str(current_user["id"]),))
 
     return await list_capabilities(device_id, current_user)

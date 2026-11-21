@@ -11,6 +11,10 @@ import { OverviewPage } from './pages/OverviewPage';
 import { EventsPage } from './pages/EventsPage';
 import { ProfilePage } from './pages/ProfilePage';
 import { SettingsPage } from './pages/SettingsPage';
+import { AutomationPage } from './pages/AutomationPage';
+import { SharedDashboardsPage } from './pages/SharedDashboardsPage';
+import { SharedDashboardPage } from './pages/SharedDashboardPage';
+import { MonitoringPage } from './pages/MonitoringPage';
 
 function LegacyDashboardRedirect() {
   const { id } = useParams<{ id: string }>();
@@ -35,6 +39,10 @@ export default function App() {
               <Route path="devices" element={<DevicesPage />} />
               <Route path="devices/:id" element={<DevicePage />} />
               <Route path="devices/:id/dashboards" element={<DashboardsListPage />} />
+              <Route path="automation" element={<AutomationPage />} />
+              <Route path="monitoring" element={<MonitoringPage />} />
+              <Route path="shared-dashboards" element={<SharedDashboardsPage />} />
+              <Route path="shared-dashboards/:dashboardId" element={<SharedDashboardPage />} />
               <Route path="profile" element={<ProfilePage />} />
               <Route path="settings" element={<SettingsPage />} />
             </Route>

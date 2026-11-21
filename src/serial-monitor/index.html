@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SignalDeck — USB-монитор</title>
+  <link rel="stylesheet" href="/style.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">SIGNALDECK · ДИАГНОСТИКА</p>
+      <h1>USB-монитор</h1>
+      <p class="subtitle">Показания платы напрямую через последовательный порт.</p>
+    </header>
+
+    <section class="panel connection" aria-labelledby="connection-title">
+      <div class="section-header">
+        <h2 id="connection-title">Подключение</h2>
+        <span id="status" class="status" role="status">Не подключено</span>
+      </div>
+      <div class="controls">
+        <label>Последовательный порт
+          <select id="ports"><option value="">Поиск портов…</option></select>
+        </label>
+        <label>Скорость
+          <select id="baud"><option>9600</option><option>19200</option><option>38400</option><option>57600</option><option selected>115200</option><option>230400</option></select>
+        </label>
+        <button id="refresh" class="secondary" type="button">Обновить порты</button>
+        <button id="connect" type="button">Подключить</button>
+        <button id="disconnect" class="secondary" type="button" disabled>Отключить</button>
+      </div>
+      <p id="message" class="hint" role="status">Подключите плату по USB и выберите её порт.</p>
+    </section>
+
+    <section class="readings" aria-labelledby="readings-title">
+      <div class="section-header">
+        <div><h2 id="readings-title">Показания датчиков</h2><p id="updated" class="hint">Ожидание данных</p></div>
+        <span id="freshness" class="freshness"></span>
+      </div>
+      <div id="sensor-cards" class="cards"><div class="empty">Подключите плату, чтобы увидеть показания.</div></div>
+      <p id="sensor-errors" class="sensor-error" role="alert" hidden></p>
+    </section>
+
+    <section class="readings" aria-labelledby="actuators-title">
+      <div class="section-header"><div><h2 id="actuators-title">Выходы</h2><p class="hint">Уровень GPIO, не проверка силовых контактов реле.</p></div></div>
+      <div id="actuator-cards" class="cards"><div class="empty">Нет данных о выходах.</div></div>
+    </section>
+
+    <section class="panel" aria-labelledby="log-title">
+      <div class="section-header"><div><h2 id="log-title">Сообщения порта</h2><p class="hint">Последние 100 строк. Данные остаются в памяти этого процесса.</p></div></div>
+      <pre id="logs" aria-live="polite">Сообщений пока нет.</pre>
+    </section>
+    <p class="footnote">Для структурированных показаний нужна совместимая прошивка SignalDeck. Другие скетчи отображаются в сообщениях порта.</p>
+    <button id="shutdown" class="secondary" type="button">Завершить USB-монитор</button>
+  </main>
+</body>
+</html>

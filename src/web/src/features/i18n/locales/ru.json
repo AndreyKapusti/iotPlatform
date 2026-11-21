@@ -4,6 +4,9 @@
     "tagline": "Мониторинг IoT-устройств и живые дашборды"
   },
   "nav": {
+    "monitoring": "Мониторинг связи",
+    "automation": "Автоматизация",
+    "sharedDashboards": "Общие дашборды",
     "overview": "Обзор",
     "events": "Лента событий",
     "devices": "Устройства",
@@ -191,6 +194,11 @@
     "duplicatedSuccess": "Дашборд скопирован"
   },
   "widgets": {
+    "automaticMode": "Автоматическое управление",
+    "modeUnavailable": "Режим управления недоступен",
+    "commandPending": "Ожидаем подтверждение устройства",
+    "commandFailed": "Команда не подтверждена",
+    "commandAcknowledged": "Устройство подтвердило команду",
     "on": "ВКЛ",
     "off": "ВЫКЛ",
     "historyError": "Не удалось загрузить историю",
